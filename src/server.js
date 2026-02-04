@@ -653,169 +653,509 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>OpenClaw Setup</title>
   <style>
-    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; margin: 2rem; max-width: 900px; }
-    .card { border: 1px solid #ddd; border-radius: 12px; padding: 1.25rem; margin: 1rem 0; }
-    label { display:block; margin-top: 0.75rem; font-weight: 600; }
-    input, select { width: 100%; padding: 0.6rem; margin-top: 0.25rem; }
-    button { padding: 0.8rem 1.2rem; border-radius: 10px; border: 0; background: #111; color: #fff; font-weight: 700; cursor: pointer; }
-    code { background: #f6f6f6; padding: 0.1rem 0.3rem; border-radius: 6px; }
-    .muted { color: #555; }
-    .config-hint { font-size: 0.85em; color: #666; margin-top: 0.25rem; }
-    .has-secret { color: #065f46; }
+    :root {
+      --bg-primary: #0a0a0a;
+      --bg-secondary: #111111;
+      --bg-card: #171717;
+      --bg-card-hover: #1f1f1f;
+      --border-color: #262626;
+      --border-accent: #374151;
+      --text-primary: #f5f5f5;
+      --text-secondary: #a3a3a3;
+      --text-muted: #737373;
+      --accent-blue: #3b82f6;
+      --accent-green: #10b981;
+      --accent-purple: #8b5cf6;
+      --accent-orange: #f59e0b;
+      --accent-red: #ef4444;
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      margin: 0;
+      padding: 1.5rem;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 2rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .header h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      margin: 0 0 0.5rem 0;
+      background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .header p {
+      color: var(--text-secondary);
+      margin: 0;
+      font-size: 0.95rem;
+    }
+
+    /* Bento Grid Layout */
+    .bento-grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 1rem;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      padding: 1.25rem;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    .card:hover {
+      border-color: var(--border-accent);
+    }
+
+    .card h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin: 0 0 0.75rem 0;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .card h2 .icon {
+      font-size: 1.1rem;
+    }
+
+    .card p.desc {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      margin: 0 0 1rem 0;
+      line-height: 1.5;
+    }
+
+    /* Card sizes */
+    .card-status { grid-column: span 8; }
+    .card-health { grid-column: span 4; }
+    .card-console { grid-column: span 6; }
+    .card-config { grid-column: span 6; }
+    .card-auth { grid-column: span 4; }
+    .card-channels { grid-column: span 4; }
+    .card-onboarding { grid-column: span 4; }
+
+    @media (max-width: 1024px) {
+      .card-status, .card-health, .card-console, .card-config,
+      .card-auth, .card-channels, .card-onboarding {
+        grid-column: span 12;
+      }
+    }
+
+    @media (min-width: 1025px) and (max-width: 1280px) {
+      .card-status { grid-column: span 7; }
+      .card-health { grid-column: span 5; }
+      .card-console { grid-column: span 6; }
+      .card-config { grid-column: span 6; }
+      .card-auth { grid-column: span 4; }
+      .card-channels { grid-column: span 4; }
+      .card-onboarding { grid-column: span 4; }
+    }
+
+    /* Form elements */
+    label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-top: 0.75rem;
+      margin-bottom: 0.25rem;
+    }
+
+    input, select, textarea {
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-size: 0.9rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent-blue);
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+    }
+
+    input::placeholder { color: var(--text-muted); }
+
+    textarea {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.8rem;
+      resize: vertical;
+    }
+
+    select option, select optgroup {
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+    }
+
+    /* Buttons */
+    button {
+      padding: 0.6rem 1rem;
+      border-radius: var(--radius-sm);
+      border: none;
+      font-weight: 600;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: transform 0.1s, opacity 0.2s;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+    }
+
+    button:hover { opacity: 0.9; }
+    button:active { transform: scale(0.98); }
+
+    .btn-primary { background: var(--accent-blue); color: white; }
+    .btn-success { background: var(--accent-green); color: white; }
+    .btn-purple { background: var(--accent-purple); color: white; }
+    .btn-orange { background: var(--accent-orange); color: white; }
+    .btn-dark { background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color); }
+    .btn-danger { background: var(--accent-red); color: white; }
+    .btn-muted { background: #404040; color: var(--text-primary); }
+
+    .btn-group {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .btn-group button { flex: 1; min-width: 100px; }
+
+    /* Status indicator */
+    .status-bar {
+      background: var(--bg-secondary);
+      border-radius: var(--radius-sm);
+      padding: 0.75rem 1rem;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+      border-left: 3px solid var(--accent-blue);
+    }
+
+    /* Links */
+    a {
+      color: var(--accent-blue);
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    a:hover { text-decoration: underline; }
+
+    .link-group {
+      display: flex;
+      gap: 1rem;
+      margin-top: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .link-group a {
+      font-size: 0.85rem;
+      padding: 0.4rem 0.75rem;
+      background: var(--bg-secondary);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-color);
+      transition: border-color 0.2s;
+    }
+
+    .link-group a:hover {
+      text-decoration: none;
+      border-color: var(--accent-blue);
+    }
+
+    /* Code */
+    code {
+      background: var(--bg-secondary);
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.85em;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    /* Pre/output */
+    pre {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      padding: 0.75rem;
+      font-size: 0.8rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 250px;
+      overflow-y: auto;
+      margin: 0.75rem 0 0 0;
+    }
+
+    /* Health status box */
+    .health-status {
+      padding: 0.75rem 1rem;
+      background: var(--bg-secondary);
+      border-radius: var(--radius-sm);
+      margin-bottom: 0.75rem;
+      display: none;
+      border-left: 3px solid var(--accent-blue);
+    }
+
+    .health-status-text { font-weight: 500; font-size: 0.9rem; }
+    .health-progress { color: var(--text-muted); font-size: 0.8rem; margin-top: 0.25rem; }
+
+    /* Hints */
+    .hint {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-top: 0.35rem;
+      line-height: 1.4;
+    }
+
+    .hint.success { color: var(--accent-green); }
+
+    /* Import section */
+    .import-section {
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border-color);
+    }
+
+    .import-section input[type="file"] {
+      padding: 0.5rem;
+      font-size: 0.85rem;
+    }
+
+    /* Section divider */
+    .section-divider {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin: 1rem 0;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .section-divider::before,
+    .section-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border-color);
+    }
+
+    /* Console styling */
+    .console-controls {
+      display: flex;
+      gap: 0.5rem;
+      align-items: stretch;
+      flex-wrap: wrap;
+    }
+
+    .console-controls select { flex: 2; min-width: 180px; }
+    .console-controls input { flex: 1; min-width: 120px; }
+    .console-controls button { flex-shrink: 0; }
+
+    .console-hint {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      font-style: italic;
+    }
+
+    /* Accent cards */
+    .card-accent-health {
+      border-color: var(--accent-green);
+      background: linear-gradient(135deg, var(--bg-card) 0%, rgba(16, 185, 129, 0.05) 100%);
+    }
+
+    .card-accent-config {
+      border-color: var(--accent-purple);
+      background: linear-gradient(135deg, var(--bg-card) 0%, rgba(139, 92, 246, 0.05) 100%);
+    }
   </style>
 </head>
 <body>
-  <h1>OpenClaw Setup</h1>
-  <p class="muted">This wizard configures OpenClaw by running the same onboarding command it uses in the terminal, but from the browser.</p>
-
-  <div class="card">
-    <h2>Status</h2>
-    <div id="status">Loading...</div>
-    <div style="margin-top: 0.75rem">
-      <a href="/openclaw" target="_blank">Open OpenClaw UI</a>
-      &nbsp;|&nbsp;
-      <a href="/setup/export" target="_blank">Download backup (.tar.gz)</a>
+  <div class="container">
+    <div class="header">
+      <h1>OpenClaw Setup</h1>
+      <p>Configure OpenClaw by running the same onboarding command it uses in the terminal, but from the browser.</p>
     </div>
 
-    <div style="margin-top: 0.75rem">
-      <div class="muted" style="margin-bottom:0.25rem"><strong>Import backup</strong> (advanced): restores into <code>/data</code> and restarts the gateway.</div>
-      <input id="importFile" type="file" accept=".tar.gz,application/gzip" />
-      <button id="importRun" style="background:#7c2d12; margin-top:0.5rem">Import</button>
-      <pre id="importOut" style="white-space:pre-wrap"></pre>
+    <div class="bento-grid">
+      <!-- Status Card -->
+      <div class="card card-status">
+        <h2><span class="icon">📊</span> Status</h2>
+        <div class="status-bar" id="status">Loading...</div>
+        <div class="link-group">
+          <a href="/openclaw" target="_blank">Open OpenClaw UI</a>
+          <a href="/setup/export" target="_blank">Download Backup</a>
+        </div>
+        <div class="import-section">
+          <label>Import backup (restores into <code>/data</code> and restarts)</label>
+          <input id="importFile" type="file" accept=".tar.gz,application/gzip" />
+          <div style="margin-top: 0.5rem">
+            <button id="importRun" class="btn-orange">Import Backup</button>
+          </div>
+          <pre id="importOut" style="display:none"></pre>
+        </div>
+      </div>
+
+      <!-- Health Check Card -->
+      <div class="card card-health card-accent-health">
+        <h2><span class="icon">🩺</span> Health Check</h2>
+        <p class="desc">Check system health and automatically fix common issues.</p>
+        <div class="btn-group">
+          <button id="healthCheck" class="btn-primary">Check</button>
+          <button id="fixAllIssues" class="btn-success">Fix All</button>
+        </div>
+        <div class="health-status" id="healthStatus">
+          <div class="health-status-text" id="healthStatusText"></div>
+          <div class="health-progress" id="healthProgress"></div>
+        </div>
+        <pre id="healthOut" style="max-height:200px"></pre>
+      </div>
+
+      <!-- Debug Console Card -->
+      <div class="card card-console">
+        <h2><span class="icon">🖥️</span> Debug Console</h2>
+        <p class="desc">Run allowlisted commands for debugging and recovery.</p>
+        <div class="console-controls">
+          <select id="consoleCmd">
+            <optgroup label="Gateway">
+              <option value="gateway.restart">gateway.restart</option>
+              <option value="gateway.stop">gateway.stop</option>
+              <option value="gateway.start">gateway.start</option>
+            </optgroup>
+            <optgroup label="Diagnostics">
+              <option value="openclaw.doctor">openclaw doctor</option>
+              <option value="openclaw.doctor.fix">openclaw doctor --fix</option>
+              <option value="openclaw.status">openclaw status</option>
+              <option value="openclaw.health">openclaw health</option>
+              <option value="openclaw.logs.tail">openclaw logs --tail</option>
+            </optgroup>
+            <optgroup label="Security">
+              <option value="openclaw.security.audit">security audit</option>
+            </optgroup>
+            <optgroup label="Configuration">
+              <option value="openclaw.config.get">config get</option>
+              <option value="openclaw.version">--version</option>
+            </optgroup>
+            <optgroup label="Wrapper">
+              <option value="wrapper.fix.dirs">Fix directories</option>
+              <option value="wrapper.fix.permissions">Fix permissions</option>
+              <option value="wrapper.env.check">Check env</option>
+            </optgroup>
+          </select>
+          <input id="consoleArg" placeholder="arg" />
+          <button id="consoleRun" class="btn-dark">Run</button>
+        </div>
+        <div class="console-hint" id="consoleArgHint"></div>
+        <pre id="consoleOut"></pre>
+      </div>
+
+      <!-- Config Editor Card -->
+      <div class="card card-config card-accent-config">
+        <h2><span class="icon">⚙️</span> Config Editor</h2>
+        <p class="desc">Edit config file directly. Saves create timestamped backups.</p>
+        <div class="hint" id="configPath"></div>
+        <textarea id="configText" style="height: 180px; margin-top: 0.5rem"></textarea>
+        <div class="btn-group" style="margin-top: 0.5rem">
+          <button id="configReload" class="btn-dark">Reload</button>
+          <button id="configSave" class="btn-purple">Save</button>
+        </div>
+        <pre id="configOut" style="display:none"></pre>
+      </div>
+
+      <!-- Auth Provider Card -->
+      <div class="card card-auth">
+        <h2><span class="icon">🔑</span> Auth Provider</h2>
+        <label>Provider</label>
+        <select id="authGroup">${authGroupOptionsHtml}</select>
+
+        <label>Auth method</label>
+        <select id="authChoice">${authChoiceOptionsHtml}</select>
+        ${formConfig.authKeyType ? `<div class="hint">Saved: <code>${formConfig.authKeyType}</code></div>` : ''}
+
+        <label>Key / Token</label>
+        <input id="authSecret" type="password" placeholder="Paste API key or token" />
+        ${formConfig.hasSecret ? '<div class="hint success">Secret configured</div>' : ''}
+
+        <label>Wizard flow</label>
+        <select id="flow">${flowOptionsHtml}</select>
+      </div>
+
+      <!-- Channels Card -->
+      <div class="card card-channels">
+        <h2><span class="icon">📱</span> Channels</h2>
+        <p class="desc">Optional: configure messaging channels.</p>
+
+        <label>Telegram bot token</label>
+        <input id="telegramToken" type="password" placeholder="123456:ABC..." />
+        ${formConfig.telegramEnabled ? '<div class="hint success">Enabled</div>' : ''}
+
+        <label>Discord bot token</label>
+        <input id="discordToken" type="password" placeholder="Bot token" />
+        ${formConfig.discordEnabled ? '<div class="hint success">Enabled</div>' : ''}
+
+        <label>Slack bot token</label>
+        <input id="slackBotToken" type="password" placeholder="xoxb-..." />
+        ${formConfig.slackEnabled ? '<div class="hint success">Enabled</div>' : ''}
+
+        <label>Slack app token</label>
+        <input id="slackAppToken" type="password" placeholder="xapp-..." />
+      </div>
+
+      <!-- Onboarding Card -->
+      <div class="card card-onboarding">
+        <h2><span class="icon">🚀</span> Run Onboarding</h2>
+        <p class="desc">Execute setup or manage user pairing.</p>
+
+        <div class="btn-group">
+          <button id="run" class="btn-primary">Run Setup</button>
+          <button id="reset" class="btn-muted">Reset</button>
+        </div>
+
+        <div class="section-divider">Pairing</div>
+
+        <div class="btn-group">
+          <button id="pairingList" class="btn-dark">List</button>
+          <button id="pairingApprove" class="btn-dark">Approve</button>
+          <button id="pairingApproveAll" class="btn-success">All</button>
+        </div>
+
+        <pre id="log"></pre>
+      </div>
     </div>
   </div>
 
-  <div class="card" style="border: 2px solid #374151;">
-    <h2>🩺 Health Check</h2>
-    <p class="muted">Check system health and automatically fix common issues like missing directories and permissions.</p>
-
-    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1rem">
-      <button id="healthCheck" style="background:#1e40af; flex:1">Run Health Check</button>
-      <button id="fixAllIssues" style="background:#065f46; flex:1">Fix All Issues</button>
-    </div>
-    <div id="healthStatus" style="padding:0.75rem; background:#1f2937; border-radius:0.375rem; margin-bottom:0.5rem; display:none">
-      <div id="healthStatusText" style="font-weight:500"></div>
-      <div id="healthProgress" class="muted" style="font-size:0.9em; margin-top:0.25rem"></div>
-    </div>
-    <pre id="healthOut" style="white-space:pre-wrap; max-height:300px; overflow-y:auto"></pre>
-  </div>
-
-  <div class="card">
-    <h2>Debug console</h2>
-    <p class="muted">Run a small allowlist of safe commands (no shell). Useful for debugging and recovery.</p>
-
-    <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap">
-      <select id="consoleCmd" style="flex: 2; min-width:200px">
-        <optgroup label="🔧 Gateway (wrapper-managed)">
-          <option value="gateway.restart">gateway.restart</option>
-          <option value="gateway.stop">gateway.stop</option>
-          <option value="gateway.start">gateway.start</option>
-        </optgroup>
-        <optgroup label="🔍 Diagnostics">
-          <option value="openclaw.doctor">openclaw doctor</option>
-          <option value="openclaw.doctor.fix">openclaw doctor --fix</option>
-          <option value="openclaw.status">openclaw status</option>
-          <option value="openclaw.health">openclaw health</option>
-          <option value="openclaw.logs.tail">openclaw logs --tail N</option>
-        </optgroup>
-        <optgroup label="🛡️ Security">
-          <option value="openclaw.security.audit">openclaw security audit</option>
-        </optgroup>
-        <optgroup label="⚙️ Configuration">
-          <option value="openclaw.config.get">openclaw config get &lt;path&gt;</option>
-          <option value="openclaw.version">openclaw --version</option>
-        </optgroup>
-        <optgroup label="🛠️ Wrapper Utilities">
-          <option value="wrapper.fix.dirs">Fix missing directories</option>
-          <option value="wrapper.fix.permissions">Fix directory permissions</option>
-          <option value="wrapper.env.check">Check environment</option>
-        </optgroup>
-      </select>
-      <input id="consoleArg" placeholder="Optional arg (e.g. 200, gateway.port, deep)" style="flex: 1; min-width:150px" />
-      <button id="consoleRun" style="background:#0f172a">Run</button>
-    </div>
-    <div id="consoleArgHint" class="muted" style="font-size:0.85em; margin-top:0.25rem"></div>
-    <pre id="consoleOut" style="white-space:pre-wrap"></pre>
-  </div>
-
-  <div class="card">
-    <h2>Config editor (advanced)</h2>
-    <p class="muted">Edits the full config file on disk (JSON5). Saving creates a timestamped <code>.bak-*</code> backup and restarts the gateway.</p>
-    <div class="muted" id="configPath"></div>
-    <textarea id="configText" style="width:100%; height: 260px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;"></textarea>
-    <div style="margin-top:0.5rem">
-      <button id="configReload" style="background:#1f2937">Reload</button>
-      <button id="configSave" style="background:#111; margin-left:0.5rem">Save</button>
-    </div>
-    <pre id="configOut" style="white-space:pre-wrap"></pre>
-  </div>
-
-  <div class="card">
-    <h2>1) Model/auth provider</h2>
-    <p class="muted">Matches the groups shown in the terminal onboarding.</p>
-    <label>Provider group</label>
-    <select id="authGroup">
-        ${authGroupOptionsHtml}
-    </select>
-
-    <label>Auth method</label>
-    <select id="authChoice">
-        ${authChoiceOptionsHtml}
-    </select>
-    ${formConfig.authKeyType ? `<div class="config-hint">Saved key type: <code>${formConfig.authKeyType}</code></div>` : ''}
-
-    <label>Key / Token (if required)</label>
-    <input id="authSecret" type="password" placeholder="Paste API key / token if applicable" />
-    ${formConfig.hasSecret ? '<div class="config-hint has-secret">A secret is already configured. Leave blank to keep existing.</div>' : ''}
-
-    <label>Wizard flow</label>
-    <select id="flow">
-        ${flowOptionsHtml}
-    </select>
-  </div>
-
-  <div class="card">
-    <h2>2) Optional: Channels</h2>
-    <p class="muted">You can also add channels later inside OpenClaw, but this helps you get messaging working immediately.</p>
-
-    <label>Telegram bot token (optional)</label>
-    <input id="telegramToken" type="password" placeholder="123456:ABC..." />
-    ${formConfig.telegramEnabled ? '<div class="config-hint has-secret">Telegram is currently enabled in config.</div>' : ''}
-    <div class="muted" style="margin-top: 0.25rem">
-      Get it from BotFather: open Telegram, message <code>@BotFather</code>, run <code>/newbot</code>, then copy the token.
-    </div>
-
-    <label>Discord bot token (optional)</label>
-    <input id="discordToken" type="password" placeholder="Bot token" />
-    ${formConfig.discordEnabled ? '<div class="config-hint has-secret">Discord is currently enabled in config.</div>' : ''}
-    <div class="muted" style="margin-top: 0.25rem">
-      Get it from the Discord Developer Portal: create an application, add a Bot, then copy the Bot Token.<br/>
-      <strong>Important:</strong> Enable <strong>MESSAGE CONTENT INTENT</strong> in Bot → Privileged Gateway Intents, or the bot will crash on startup.
-    </div>
-
-    <label>Slack bot token (optional)</label>
-    <input id="slackBotToken" type="password" placeholder="xoxb-..." />
-    ${formConfig.slackEnabled ? '<div class="config-hint has-secret">Slack is currently enabled in config.</div>' : ''}
-
-    <label>Slack app token (optional)</label>
-    <input id="slackAppToken" type="password" placeholder="xapp-..." />
-  </div>
-
-  <div class="card">
-    <h2>3) Run onboarding</h2>
-    <button id="run">Run setup</button>
-    <button id="pairingList" style="background:#1e3a5f; margin-left:0.5rem">List pending</button>
-    <button id="pairingApprove" style="background:#1f2937; margin-left:0.5rem">Approve pairing</button>
-    <button id="pairingApproveAll" style="background:#065f46; margin-left:0.5rem">Approve all</button>
-    <button id="reset" style="background:#444; margin-left:0.5rem">Reset setup</button>
-    <pre id="log" style="white-space:pre-wrap"></pre>
-    <p class="muted">
-      <strong>Pairing required?</strong> When users message your bot, they receive a pairing code. Use "List pending" to see codes, then "Approve pairing" (single) or "Approve all" (batch).<br/>
-      Reset deletes the OpenClaw config file so you can rerun onboarding.
-    </p>
-  </div>
-
-  <!-- Embed auth groups data for JavaScript cascading behavior -->
   <script id="authGroupsData" type="application/json">${authGroupsJson}</script>
   <script src="/setup/app.js"></script>
 </body>
@@ -1386,12 +1726,13 @@ app.post("/setup/api/health/fix-all", requireSetupAuth, async (req, res) => {
   output += "╚══════════════════════════════════════════════════════════════╝\n\n";
 
   // Step 1: Create missing directories
-  output += "━━━ Step 1/4: Creating missing directories ━━━\n";
+  output += "━━━ Step 1/5: Creating missing directories ━━━\n";
   const dirsToCreate = [
     path.join(STATE_DIR, "credentials"),
     path.join(STATE_DIR, "identity"),
     path.join(STATE_DIR, "logs"),
     path.join(STATE_DIR, "sessions"),
+    path.join(STATE_DIR, "agents", "main", "sessions"),
     WORKSPACE_DIR,
   ];
   let dirSuccess = true;
@@ -1408,7 +1749,7 @@ app.post("/setup/api/health/fix-all", requireSetupAuth, async (req, res) => {
   output += "\n";
 
   // Step 2: Fix permissions
-  output += "━━━ Step 2/4: Fixing directory permissions ━━━\n";
+  output += "━━━ Step 2/5: Fixing directory permissions ━━━\n";
   let permSuccess = true;
   const dirsToFix = [STATE_DIR, WORKSPACE_DIR, ...dirsToCreate.filter((d) => d !== WORKSPACE_DIR)];
   for (const dir of dirsToFix) {
@@ -1425,15 +1766,41 @@ app.post("/setup/api/health/fix-all", requireSetupAuth, async (req, res) => {
   steps.push({ name: "Fix permissions", ok: permSuccess });
   output += "\n";
 
-  // Step 3: Run openclaw doctor --fix
-  output += "━━━ Step 3/4: Running openclaw doctor --fix ━━━\n";
+  // Step 3: Set gateway mode if not configured
+  output += "━━━ Step 3/5: Configuring gateway mode ━━━\n";
+  let gatewayModeOk = true;
+  try {
+    // Check if gateway.mode is set
+    const modeCheck = await runCmd(OPENCLAW_NODE, clawArgs(["config", "get", "gateway.mode"]));
+    const currentMode = (modeCheck.output || "").trim();
+    if (!currentMode || currentMode === "undefined" || currentMode === "null" || modeCheck.code !== 0) {
+      output += "  Setting gateway.mode to 'local'...\n";
+      const setResult = await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.mode", "local"]));
+      if (setResult.code === 0) {
+        output += "  ✓ gateway.mode set to 'local'\n";
+      } else {
+        output += `  ✗ Failed to set gateway.mode: ${redactSecrets(setResult.output)}\n`;
+        gatewayModeOk = false;
+      }
+    } else {
+      output += `  ✓ gateway.mode already set to '${currentMode}'\n`;
+    }
+  } catch (err) {
+    output += `  ✗ Error configuring gateway mode: ${err.message}\n`;
+    gatewayModeOk = false;
+  }
+  steps.push({ name: "Configure gateway mode", ok: gatewayModeOk });
+  output += "\n";
+
+  // Step 4: Run openclaw doctor --fix
+  output += "━━━ Step 4/5: Running openclaw doctor --fix ━━━\n";
   const doctorResult = await runCmd(OPENCLAW_NODE, clawArgs(["doctor", "--fix"]));
   const doctorOk = doctorResult.code === 0;
   output += redactSecrets(doctorResult.output) + "\n";
   steps.push({ name: "OpenClaw doctor --fix", ok: doctorOk });
 
-  // Step 4: Restart gateway
-  output += "━━━ Step 4/4: Restarting gateway ━━━\n";
+  // Step 5: Restart gateway
+  output += "━━━ Step 5/5: Restarting gateway ━━━\n";
   try {
     await restartGateway();
     output += "  ✓ Gateway restarted successfully\n";

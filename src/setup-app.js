@@ -223,7 +223,7 @@
   function showHealthStatus(text, progress, color) {
     if (healthStatusEl) {
       healthStatusEl.style.display = 'block';
-      healthStatusEl.style.borderLeft = '4px solid ' + (color || '#3b82f6');
+      healthStatusEl.style.borderLeftColor = color || '#3b82f6';
     }
     if (healthStatusTextEl) healthStatusTextEl.textContent = text;
     if (healthProgressEl) healthProgressEl.textContent = progress || '';
@@ -235,7 +235,10 @@
 
   // Run health check
   function runHealthCheck() {
-    if (healthOutEl) healthOutEl.textContent = '';
+    if (healthOutEl) {
+      healthOutEl.textContent = '';
+      healthOutEl.style.display = 'block';
+    }
     showHealthStatus('🔍 Running health check...', 'Please wait...', '#3b82f6');
 
     return httpJson('/setup/api/health').then(function (j) {
@@ -260,12 +263,15 @@
 
   // Fix all issues
   function runFixAll() {
-    if (!confirm('This will attempt to fix all detected issues:\n\n• Create missing directories\n• Fix directory permissions\n• Run openclaw doctor --fix\n• Restart the gateway\n\nContinue?')) {
+    if (!confirm('This will attempt to fix all detected issues:\n\n• Create missing directories\n• Fix directory permissions\n• Configure gateway mode\n• Run openclaw doctor --fix\n• Restart the gateway\n\nContinue?')) {
       return;
     }
 
-    if (healthOutEl) healthOutEl.textContent = '';
-    showHealthStatus('🔧 Fixing issues...', 'Step 1/4: Creating directories...', '#8b5cf6');
+    if (healthOutEl) {
+      healthOutEl.textContent = '';
+      healthOutEl.style.display = 'block';
+    }
+    showHealthStatus('🔧 Fixing issues...', 'Step 1/5: Creating directories...', '#8b5cf6');
 
     return httpJson('/setup/api/health/fix-all', {
       method: 'POST',
@@ -301,21 +307,30 @@
   // Config raw load/save
   function loadConfigRaw() {
     if (!configTextEl) return;
-    if (configOutEl) configOutEl.textContent = '';
+    if (configOutEl) {
+      configOutEl.textContent = '';
+      configOutEl.style.display = 'none';
+    }
     return httpJson('/setup/api/config/raw').then(function (j) {
       if (configPathEl) {
-        configPathEl.textContent = 'Config file: ' + (j.path || '(unknown)') + (j.exists ? '' : ' (does not exist yet)');
+        configPathEl.textContent = (j.path || '(unknown)') + (j.exists ? '' : ' (does not exist yet)');
       }
       configTextEl.value = j.content || '';
     }).catch(function (e) {
-      if (configOutEl) configOutEl.textContent = 'Error loading config: ' + String(e);
+      if (configOutEl) {
+        configOutEl.style.display = 'block';
+        configOutEl.textContent = 'Error loading config: ' + String(e);
+      }
     });
   }
 
   function saveConfigRaw() {
     if (!configTextEl) return;
     if (!confirm('Save config and restart gateway? A timestamped .bak backup will be created.')) return;
-    if (configOutEl) configOutEl.textContent = 'Saving...\n';
+    if (configOutEl) {
+      configOutEl.style.display = 'block';
+      configOutEl.textContent = 'Saving...\n';
+    }
     return httpJson('/setup/api/config/raw', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -341,7 +356,10 @@
     }
     if (!confirm('Import backup? This overwrites files under /data and restarts the gateway.')) return;
 
-    if (importOutEl) importOutEl.textContent = 'Uploading ' + f.name + ' (' + f.size + ' bytes)...\n';
+    if (importOutEl) {
+      importOutEl.style.display = 'block';
+      importOutEl.textContent = 'Uploading ' + f.name + ' (' + f.size + ' bytes)...\n';
+    }
 
     return f.arrayBuffer().then(function (buf) {
       return fetch('/setup/import', {
