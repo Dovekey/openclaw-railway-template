@@ -56,59 +56,141 @@ function expandShellPath(p) {
 }
 
 // Test if a directory is fully usable (can create subdirs, write files)
-function testDirUsable(dir) {
-  fs.mkdirSync(dir, { recursive: true });
+// Returns { ok: boolean, error?: string }
+function testDirUsable(dir, verbose = false) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch (err) {
+    if (verbose) console.error(`[wrapper] Cannot create directory ${dir}: ${err.message}`);
+    return { ok: false, error: `Cannot create directory: ${err.message}` };
+  }
+
   // Test write access to the directory itself
   const testFile = path.join(dir, ".write-test");
-  fs.writeFileSync(testFile, "test", { mode: 0o600 });
-  fs.unlinkSync(testFile);
+  try {
+    fs.writeFileSync(testFile, "test", { mode: 0o600 });
+    fs.unlinkSync(testFile);
+  } catch (err) {
+    if (verbose) console.error(`[wrapper] Cannot write to ${dir}: ${err.message}`);
+    return { ok: false, error: `Cannot write file: ${err.message}` };
+  }
+
   // Also test that we can create subdirectories (critical for workspace)
   const testSubdir = path.join(dir, ".subdir-test");
-  fs.mkdirSync(testSubdir, { recursive: true });
-  fs.rmdirSync(testSubdir);
+  try {
+    fs.mkdirSync(testSubdir, { recursive: true });
+    fs.rmdirSync(testSubdir);
+  } catch (err) {
+    if (verbose) console.error(`[wrapper] Cannot create subdirs in ${dir}: ${err.message}`);
+    return { ok: false, error: `Cannot create subdirectory: ${err.message}` };
+  }
+
+  return { ok: true };
+}
+
+// Detailed diagnosis of /data mount point
+function diagnoseDataMount() {
+  const diagnosis = {
+    exists: false,
+    isDirectory: false,
+    writable: false,
+    stats: null,
+    error: null,
+  };
+
+  try {
+    const stats = fs.statSync("/data");
+    diagnosis.exists = true;
+    diagnosis.isDirectory = stats.isDirectory();
+    diagnosis.stats = {
+      uid: stats.uid,
+      gid: stats.gid,
+      mode: (stats.mode & 0o777).toString(8),
+    };
+
+    // Try to write
+    const testResult = testDirUsable("/data/.openclaw", false);
+    diagnosis.writable = testResult.ok;
+    if (!testResult.ok) {
+      diagnosis.error = testResult.error;
+    }
+  } catch (err) {
+    diagnosis.error = err.message;
+  }
+
+  return diagnosis;
 }
 
 function findWritableStateDir() {
+  console.log("[wrapper] ========================================");
+  console.log("[wrapper] Finding writable state directory...");
+  console.log(`[wrapper] Process UID: ${process.getuid?.() ?? "N/A"}, GID: ${process.getgid?.() ?? "N/A"}`);
+  console.log(`[wrapper] HOME: ${os.homedir()}`);
+
+  // Diagnose /data mount point
+  const dataDiagnosis = diagnoseDataMount();
+  console.log(`[wrapper] /data diagnosis:`, JSON.stringify(dataDiagnosis));
+
   // If explicitly set via env, expand shell variables and validate
   const rawEnvDir = process.env.OPENCLAW_STATE_DIR?.trim() || process.env.CLAWDBOT_STATE_DIR?.trim();
   if (rawEnvDir) {
     const envDir = expandShellPath(rawEnvDir);
-    // Validate the expanded path is usable before returning
-    try {
-      testDirUsable(envDir);
+    console.log(`[wrapper] Env-specified state dir: ${rawEnvDir} -> ${envDir}`);
+
+    const testResult = testDirUsable(envDir, true);
+    if (testResult.ok) {
+      console.log(`[wrapper] ✓ Using env-specified state dir: ${envDir}`);
+      console.log("[wrapper] ========================================");
       return envDir;
-    } catch {
-      // Env-specified path not usable, fall through to auto-discovery
-      console.warn(`[wrapper] Configured state dir "${rawEnvDir}" (expanded: "${envDir}") is not writable, auto-discovering...`);
     }
+    console.warn(`[wrapper] ✗ Env-specified state dir not usable: ${testResult.error}`);
   }
 
   // Try candidate directories in order of preference
   // /data is the Railway volume mount - prioritize it for persistent storage
   const candidates = [
-    "/data/.openclaw",
-    path.join(os.homedir(), ".openclaw"),
-    path.join(os.tmpdir(), ".openclaw"),
-    path.join(process.cwd(), ".openclaw"),
+    { path: "/data/.openclaw", label: "Railway volume" },
+    { path: path.join(os.homedir(), ".openclaw"), label: "Home directory" },
+    { path: path.join(os.tmpdir(), ".openclaw"), label: "Temp directory (NOT PERSISTENT)" },
+    { path: path.join(process.cwd(), ".openclaw"), label: "Current directory" },
   ];
 
-  for (const dir of candidates) {
-    try {
-      testDirUsable(dir);
-      return dir;
-    } catch {
-      // This location isn't writable, try next
+  for (const candidate of candidates) {
+    console.log(`[wrapper] Trying: ${candidate.path} (${candidate.label})`);
+    const testResult = testDirUsable(candidate.path, true);
+    if (testResult.ok) {
+      console.log(`[wrapper] ✓ Using: ${candidate.path}`);
+
+      // Warn if not using /data
+      if (!candidate.path.startsWith("/data")) {
+        console.warn("[wrapper] ========================================");
+        console.warn("[wrapper] ⚠️  WARNING: NOT USING /data VOLUME!");
+        console.warn("[wrapper] ⚠️  Data will NOT persist across restarts!");
+        console.warn("[wrapper] ⚠️  Add a Railway volume mounted at /data");
+        console.warn("[wrapper] ========================================");
+      }
+
+      console.log("[wrapper] ========================================");
+      return candidate.path;
     }
+    console.log(`[wrapper] ✗ ${candidate.path}: ${testResult.error}`);
   }
 
   // Last resort: use tmpdir directly with a unique subdirectory
   const fallback = path.join(os.tmpdir(), `openclaw-${process.pid}`);
+  console.warn("[wrapper] ========================================");
+  console.warn("[wrapper] ⚠️⚠️⚠️  CRITICAL: USING TEMP FALLBACK ⚠️⚠️⚠️");
+  console.warn(`[wrapper] ⚠️  Path: ${fallback}`);
+  console.warn("[wrapper] ⚠️  ALL DATA WILL BE LOST ON RESTART!");
+  console.warn("[wrapper] ⚠️  This should NEVER happen in production!");
+  console.warn("[wrapper] ========================================");
+
   try {
     fs.mkdirSync(fallback, { recursive: true });
     return fallback;
   } catch {
     // If even tmpdir fails, just return the first candidate and let it fail later with a clear error
-    return candidates[0];
+    return candidates[0].path;
   }
 }
 
