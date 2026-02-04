@@ -29,33 +29,44 @@
     statusEl.textContent = s;
   }
 
-  function renderAuth(groups) {
-    authGroupEl.innerHTML = '';
-    for (var i = 0; i < groups.length; i++) {
-      var g = groups[i];
-      var opt = document.createElement('option');
-      opt.value = g.value;
-      opt.textContent = g.label + (g.hint ? ' - ' + g.hint : '');
-      authGroupEl.appendChild(opt);
+  // Filter authChoice options based on selected authGroup
+  // Options are pre-rendered with data-group attribute, we just show/hide optgroups
+  function filterAuthChoices() {
+    var selectedGroup = authGroupEl.value;
+    var optgroups = authChoiceEl.querySelectorAll('optgroup');
+    var firstVisibleOption = null;
+    var currentValueStillVisible = false;
+    var currentValue = authChoiceEl.value;
+
+    for (var i = 0; i < optgroups.length; i++) {
+      var og = optgroups[i];
+      var groupValue = og.getAttribute('data-group');
+      if (groupValue === selectedGroup) {
+        og.style.display = '';
+        og.disabled = false;
+        // Check if current value is in this group
+        var opts = og.querySelectorAll('option');
+        for (var j = 0; j < opts.length; j++) {
+          if (!firstVisibleOption) firstVisibleOption = opts[j];
+          if (opts[j].value === currentValue) currentValueStillVisible = true;
+        }
+      } else {
+        og.style.display = 'none';
+        og.disabled = true;
+      }
     }
 
-    authGroupEl.onchange = function () {
-      var sel = null;
-      for (var j = 0; j < groups.length; j++) {
-        if (groups[j].value === authGroupEl.value) sel = groups[j];
-      }
-      authChoiceEl.innerHTML = '';
-      var opts = (sel && sel.options) ? sel.options : [];
-      for (var k = 0; k < opts.length; k++) {
-        var o = opts[k];
-        var opt2 = document.createElement('option');
-        opt2.value = o.value;
-        opt2.textContent = o.label + (o.hint ? ' - ' + o.hint : '');
-        authChoiceEl.appendChild(opt2);
-      }
-    };
+    // If current selection is no longer visible, select the first visible option
+    if (!currentValueStillVisible && firstVisibleOption) {
+      authChoiceEl.value = firstVisibleOption.value;
+    }
+  }
 
-    authGroupEl.onchange();
+  // Set up cascading behavior for auth selects
+  if (authGroupEl && authChoiceEl) {
+    authGroupEl.onchange = filterAuthChoices;
+    // Initial filter based on pre-selected group
+    filterAuthChoices();
   }
 
   function httpJson(url, opts) {
@@ -75,8 +86,18 @@
     setStatus('Loading...');
     return httpJson('/setup/api/status').then(function (j) {
       var ver = j.openclawVersion ? (' | ' + j.openclawVersion) : '';
-      setStatus((j.configured ? 'Configured - open /openclaw' : 'Not configured - run setup below') + ver);
-      renderAuth(j.authGroups || []);
+      var authInfo = '';
+      if (j.savedAuth && j.savedAuth.choice) {
+        authInfo = ' | Auth: ' + j.savedAuth.provider + ' (' + j.savedAuth.keyType + ')';
+      }
+      setStatus((j.configured ? 'Configured - open /openclaw' : 'Not configured - run setup below') + ver + authInfo);
+
+      // Options are pre-rendered in HTML, no need to call renderAuth()
+      // Just ensure the cascading filter is applied
+      if (authGroupEl && authChoiceEl) {
+        filterAuthChoices();
+      }
+
       // If channels are unsupported, surface it for debugging.
       if (j.channelsAddHelp && j.channelsAddHelp.indexOf('telegram') === -1) {
         logEl.textContent += '\nNote: this openclaw build does not list telegram in `channels add --help`. Telegram auto-add will be skipped.\n';
