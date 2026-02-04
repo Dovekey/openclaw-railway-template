@@ -143,6 +143,84 @@ If you see this warning, your data will NOT persist:
 [entrypoint] ⚠⚠⚠ USING /tmp AS LAST RESORT ⚠⚠⚠
 ```
 
+## SSH into your Railway container
+
+Railway provides direct SSH access to your running container for debugging, inspecting files, or running OpenClaw CLI commands manually.
+
+### Method 1: Railway CLI (recommended)
+
+1. **Install the Railway CLI** (if you haven't already):
+   ```bash
+   # macOS
+   brew install railway
+
+   # npm (any platform)
+   npm install -g @railway/cli
+
+   # Or download from https://railway.app/cli
+   ```
+
+2. **Login to Railway**:
+   ```bash
+   railway login
+   ```
+
+3. **Link your project** (run from any directory):
+   ```bash
+   railway link
+   ```
+   Select your project and environment when prompted.
+
+4. **SSH into the container**:
+   ```bash
+   railway shell
+   ```
+   This opens an interactive shell session inside your running container.
+
+### Method 2: Railway Dashboard
+
+1. Go to your project in the [Railway Dashboard](https://railway.app/dashboard)
+2. Click on your OpenClaw service
+3. Go to the **Deployments** tab
+4. Click on the active deployment
+5. Click the **Shell** button in the top-right corner
+
+This opens a web-based terminal directly in your browser.
+
+### Useful commands once connected
+
+```bash
+# Check OpenClaw status
+openclaw status
+
+# View gateway logs
+cat /data/.openclaw/logs/gateway.log
+
+# List configured channels
+openclaw channels list
+
+# Check storage/state directory
+ls -la /data/.openclaw/
+
+# View running processes
+ps aux
+
+# Check environment variables
+env | grep OPENCLAW
+
+# Manually restart the gateway (use with caution)
+pkill -f "openclaw gateway" && openclaw gateway start
+```
+
+### Troubleshooting SSH access
+
+- **"No running deployment"**: Make sure your service has an active deployment. Check the Railway dashboard.
+- **"Permission denied"**: Re-run `railway login` to refresh your session.
+- **"Project not linked"**: Run `railway link` and select your project.
+- **Shell exits immediately**: The container may be restarting. Check deployment logs in the Railway dashboard.
+
+---
+
 ## Local smoke test
 
 ```bash
