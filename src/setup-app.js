@@ -238,20 +238,61 @@
   // Debug Console
   // =========================================================================
   var commandHints = {
+    // Troubleshooting
+    'wrapper.troubleshoot': 'Comprehensive system check with issue detection',
+    'wrapper.troubleshoot.quick': 'Fast check of essential components only',
+    'wrapper.troubleshoot.deep': 'Deep scan including security audit and memory status',
+    // Gateway
     'gateway.restart': 'Restarts the internal gateway process',
     'gateway.stop': 'Stops the internal gateway process',
     'gateway.start': 'Starts the internal gateway process',
+    'gateway.probe': 'Tests gateway connectivity and reachability',
+    // Core Diagnostics
     'openclaw.doctor': 'Runs diagnostics and shows any issues',
     'openclaw.doctor.fix': 'Runs diagnostics and attempts to fix issues automatically',
-    'openclaw.status': 'Shows current status',
+    'openclaw.status': 'Shows current status summary',
+    'openclaw.status.all': 'Shows full status with all details',
     'openclaw.health': 'Health check endpoint status',
-    'openclaw.logs.tail': 'Arg: number of lines (50-1000, default: 200)',
-    'openclaw.security.audit': 'Arg: "deep" for thorough scan',
-    'openclaw.config.get': 'Arg: config path (e.g. gateway.port, security.dmPolicy)',
     'openclaw.version': 'Shows version information',
+    // Updates
+    'openclaw.update.check': 'Check for available updates',
+    'openclaw.update.run': 'Run the update process (may take a while)',
+    // Logs
+    'openclaw.logs.tail': 'Arg: number of lines (50-1000, default: 200)',
+    'openclaw.logs.follow': 'Stream logs for 5 seconds',
+    'openclaw.logs.clear': 'Clear all log files',
+    // Security
+    'openclaw.security.audit': 'Run security audit',
+    'openclaw.security.audit.deep': 'Run thorough security scan (takes longer)',
+    // Configuration
+    'openclaw.config.get': 'Arg: config path (e.g. gateway.port, security.dmPolicy)',
+    'openclaw.config.list': 'List all configuration settings',
+    'openclaw.config.validate': 'Validate configuration file syntax and values',
+    // Sessions
+    'openclaw.sessions.list': 'List all sessions',
+    'openclaw.sessions.active': 'Show currently active sessions',
+    'openclaw.sessions.clear': 'Clear all session data',
+    // Agents
+    'openclaw.agents.list': 'List all configured agents',
+    'openclaw.agents.status': 'Arg: agent name (default: main)',
+    'openclaw.agents.restart': 'Arg: agent name to restart (default: main)',
+    // Memory
+    'openclaw.memory.status': 'Show memory plugin status',
+    'openclaw.memory.stats': 'Show memory usage statistics',
+    'openclaw.memory.clear': 'Clear memory/conversation history',
+    // Channels
+    'openclaw.channels.list': 'List all configured channels',
+    'openclaw.channels.status': 'Show status of all channels',
+    'openclaw.channels.test': 'Arg: channel name to test (optional)',
+    // Pairing
+    'openclaw.pairing.list': 'List all pairing entries',
+    'openclaw.pairing.pending': 'List pending pairing requests',
+    // Wrapper Utilities
     'wrapper.fix.dirs': 'Creates missing directories (credentials, identity, logs, sessions)',
     'wrapper.fix.permissions': 'Sets directory permissions to 700 (owner only)',
-    'wrapper.env.check': 'Shows environment variables and directory status'
+    'wrapper.env.check': 'Shows environment variables and directory status',
+    'wrapper.storage.check': 'Detailed storage and persistence diagnostics',
+    'wrapper.network.check': 'Network and gateway connectivity diagnostics'
   };
 
   var consoleArgHintEl = document.getElementById('consoleArgHint');
@@ -267,8 +308,10 @@
         consoleArgEl.placeholder = 'Lines (50-1000)';
       } else if (cmd === 'openclaw.config.get') {
         consoleArgEl.placeholder = 'Config path (e.g. gateway.port)';
-      } else if (cmd === 'openclaw.security.audit') {
-        consoleArgEl.placeholder = 'Optional: deep';
+      } else if (cmd === 'openclaw.agents.status' || cmd === 'openclaw.agents.restart') {
+        consoleArgEl.placeholder = 'Agent name (default: main)';
+      } else if (cmd === 'openclaw.channels.test') {
+        consoleArgEl.placeholder = 'Channel name (optional)';
       } else {
         consoleArgEl.placeholder = '';
       }
@@ -420,6 +463,92 @@
 
   if (healthCheckBtn) healthCheckBtn.onclick = runHealthCheck;
   if (fixAllBtn) fixAllBtn.onclick = runFixAll;
+
+  // =========================================================================
+  // Troubleshooter
+  // =========================================================================
+  var troubleshootQuickBtn = document.getElementById('troubleshootQuick');
+  var troubleshootStandardBtn = document.getElementById('troubleshootStandard');
+  var troubleshootDeepBtn = document.getElementById('troubleshootDeep');
+  var troubleshootOutEl = document.getElementById('troubleshootOut');
+  var troubleshootStatusEl = document.getElementById('troubleshootStatus');
+  var troubleshootStatusTextEl = document.getElementById('troubleshootStatusText');
+  var troubleshootProgressEl = document.getElementById('troubleshootProgress');
+
+  function showTroubleshootStatus(text, progress, color) {
+    if (troubleshootStatusEl) {
+      troubleshootStatusEl.style.display = 'block';
+      troubleshootStatusEl.style.borderLeftColor = color || '#8b5cf6';
+    }
+    if (troubleshootStatusTextEl) troubleshootStatusTextEl.textContent = text;
+    if (troubleshootProgressEl) troubleshootProgressEl.textContent = progress || '';
+  }
+
+  function hideTroubleshootStatus() {
+    if (troubleshootStatusEl) troubleshootStatusEl.style.display = 'none';
+  }
+
+  function runTroubleshoot(level) {
+    var cmdMap = {
+      'quick': 'wrapper.troubleshoot.quick',
+      'standard': 'wrapper.troubleshoot',
+      'deep': 'wrapper.troubleshoot.deep'
+    };
+    var cmd = cmdMap[level] || 'wrapper.troubleshoot';
+    var levelLabels = {
+      'quick': 'Quick Check',
+      'standard': 'Standard Troubleshoot',
+      'deep': 'Deep Scan'
+    };
+
+    if (troubleshootOutEl) {
+      troubleshootOutEl.textContent = '';
+      troubleshootOutEl.style.display = 'block';
+    }
+    showTroubleshootStatus('Running ' + levelLabels[level] + '...', 'Checking system components...', '#8b5cf6');
+    outputToChat('Running ' + levelLabels[level] + '...', 'user');
+    showTyping(true, 'Running diagnostics...');
+
+    return httpJson('/setup/api/console/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cmd: cmd, arg: '' })
+    }).then(function (j) {
+      showTyping(false);
+      var output = j.output || JSON.stringify(j, null, 2);
+      if (troubleshootOutEl) troubleshootOutEl.textContent = output;
+      outputToChat(output, 'system-output');
+
+      if (j.ok) {
+        showTroubleshootStatus('All checks passed!', 'System is healthy', '#10b981');
+        outputToChat('Troubleshoot completed - no issues found!', 'system');
+      } else {
+        var issueCount = j.issues ? j.issues.length : 0;
+        showTroubleshootStatus(
+          'Found ' + issueCount + ' issue(s)',
+          'Click "Fix All Issues" in Health Check to repair',
+          '#f59e0b'
+        );
+        outputToChat('Troubleshoot found ' + issueCount + ' issue(s). Check the output for details.', 'system');
+      }
+      return refreshStatus();
+    }).catch(function (e) {
+      showTyping(false);
+      if (troubleshootOutEl) troubleshootOutEl.textContent = 'Error: ' + String(e);
+      showTroubleshootStatus('Troubleshoot failed', String(e), '#ef4444');
+      outputToChat('Troubleshoot error: ' + String(e), 'error');
+    });
+  }
+
+  if (troubleshootQuickBtn) {
+    troubleshootQuickBtn.onclick = function() { runTroubleshoot('quick'); };
+  }
+  if (troubleshootStandardBtn) {
+    troubleshootStandardBtn.onclick = function() { runTroubleshoot('standard'); };
+  }
+  if (troubleshootDeepBtn) {
+    troubleshootDeepBtn.onclick = function() { runTroubleshoot('deep'); };
+  }
 
   // =========================================================================
   // Config Editor
@@ -712,19 +841,51 @@
 
     addChatMessage(input, 'user');
 
+    // Helper function for running console commands
+    function runChatConsoleCmd(consoleCmdName, displayName, argValue) {
+      showTyping(true, displayName + '...');
+      return httpJson('/setup/api/console/run', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cmd: consoleCmdName, arg: argValue || '' })
+      }).then(function (j) {
+        showTyping(false);
+        addChatMessage(j.output || JSON.stringify(j), 'system-output');
+      }).catch(function (e) {
+        showTyping(false);
+        addChatMessage('Error: ' + String(e), 'error');
+      });
+    }
+
     switch (cmd) {
       case 'help':
         addChatMessage(
-          'Available commands:\n' +
-          '/help - Show this help\n' +
+          'Available commands:\n\n' +
+          '**Diagnostics**\n' +
           '/health - Run health check\n' +
-          '/fix - Fix all issues\n' +
-          '/doctor - Run diagnostics\n' +
-          '/status - Show status\n' +
+          '/fix - Fix all issues automatically\n' +
+          '/doctor - Run OpenClaw diagnostics\n' +
+          '/troubleshoot - Run comprehensive troubleshooter\n' +
+          '/status - Show current status\n' +
+          '/logs [n] - Show last n log lines (default: 100)\n\n' +
+          '**Gateway**\n' +
           '/restart - Restart gateway\n' +
-          '/version - Show version\n' +
-          '/clear - Clear chat history\n' +
-          '\nOr just type a message to chat with OpenClaw!',
+          '/probe - Test gateway connectivity\n\n' +
+          '**Security**\n' +
+          '/audit - Run security audit\n' +
+          '/audit deep - Run deep security scan\n\n' +
+          '**Sessions & Memory**\n' +
+          '/sessions - List active sessions\n' +
+          '/memory - Show memory status\n\n' +
+          '**Channels**\n' +
+          '/channels - Show channel status\n\n' +
+          '**System**\n' +
+          '/version - Show version info\n' +
+          '/update - Check for updates\n' +
+          '/storage - Storage diagnostics\n' +
+          '/network - Network diagnostics\n' +
+          '/clear - Clear chat history\n\n' +
+          'Or just type a message to chat with OpenClaw!',
           'system'
         );
         break;
@@ -737,34 +898,22 @@
         runFixAll();
         break;
 
+      case 'troubleshoot':
+        var level = args === 'deep' ? 'deep' : (args === 'quick' ? 'quick' : 'standard');
+        runTroubleshoot(level);
+        break;
+
       case 'doctor':
-        showTyping(true, 'Running diagnostics...');
-        httpJson('/setup/api/console/run', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ cmd: 'openclaw.doctor', arg: '' })
-        }).then(function (j) {
-          showTyping(false);
-          addChatMessage(j.output || JSON.stringify(j), 'system-output');
-        }).catch(function (e) {
-          showTyping(false);
-          addChatMessage('Error: ' + String(e), 'error');
-        });
+        runChatConsoleCmd('openclaw.doctor', 'Running diagnostics');
         break;
 
       case 'status':
-        showTyping(true, 'Getting status...');
-        httpJson('/setup/api/console/run', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ cmd: 'openclaw.status', arg: '' })
-        }).then(function (j) {
-          showTyping(false);
-          addChatMessage(j.output || JSON.stringify(j), 'system-output');
-        }).catch(function (e) {
-          showTyping(false);
-          addChatMessage('Error: ' + String(e), 'error');
-        });
+        runChatConsoleCmd(args === 'all' ? 'openclaw.status.all' : 'openclaw.status', 'Getting status');
+        break;
+
+      case 'logs':
+        var lineCount = parseInt(args, 10) || 100;
+        runChatConsoleCmd('openclaw.logs.tail', 'Getting logs', String(lineCount));
         break;
 
       case 'restart':
@@ -782,19 +931,41 @@
         });
         break;
 
+      case 'probe':
+        runChatConsoleCmd('gateway.probe', 'Probing gateway');
+        break;
+
+      case 'audit':
+        var auditCmd = args === 'deep' ? 'openclaw.security.audit.deep' : 'openclaw.security.audit';
+        runChatConsoleCmd(auditCmd, 'Running security audit');
+        break;
+
+      case 'sessions':
+        runChatConsoleCmd('openclaw.sessions.list', 'Getting sessions');
+        break;
+
+      case 'memory':
+        runChatConsoleCmd('openclaw.memory.status', 'Getting memory status');
+        break;
+
+      case 'channels':
+        runChatConsoleCmd('openclaw.channels.status', 'Getting channel status');
+        break;
+
       case 'version':
-        showTyping(true, 'Getting version...');
-        httpJson('/setup/api/console/run', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ cmd: 'openclaw.version', arg: '' })
-        }).then(function (j) {
-          showTyping(false);
-          addChatMessage(j.output || JSON.stringify(j), 'system-output');
-        }).catch(function (e) {
-          showTyping(false);
-          addChatMessage('Error: ' + String(e), 'error');
-        });
+        runChatConsoleCmd('openclaw.version', 'Getting version');
+        break;
+
+      case 'update':
+        runChatConsoleCmd('openclaw.update.check', 'Checking for updates');
+        break;
+
+      case 'storage':
+        runChatConsoleCmd('wrapper.storage.check', 'Running storage diagnostics');
+        break;
+
+      case 'network':
+        runChatConsoleCmd('wrapper.network.check', 'Running network diagnostics');
         break;
 
       case 'clear':
@@ -831,9 +1002,10 @@
     setTimeout(function () {
       addChatMessage(
         'Welcome! Type a message to chat with OpenClaw, or use commands:\n' +
-        '/help - Show all commands\n' +
-        '/health - Check system health\n' +
-        '/doctor - Run diagnostics',
+        '/help - Show all available commands\n' +
+        '/troubleshoot - Run comprehensive diagnostics\n' +
+        '/health - Quick health check\n' +
+        '/status - Show current status',
         'system'
       );
     }, 500);

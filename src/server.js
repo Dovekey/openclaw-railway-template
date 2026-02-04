@@ -1060,6 +1060,7 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
     /* Card sizes */
     .card-status { grid-column: span 8; }
     .card-health { grid-column: span 4; }
+    .card-troubleshooter { grid-column: span 6; }
     .card-console { grid-column: span 6; }
     .card-config { grid-column: span 6; }
     .card-auth { grid-column: span 4; }
@@ -1068,7 +1069,7 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
     .card-chat { grid-column: span 12; }
 
     @media (max-width: 1024px) {
-      .card-status, .card-health, .card-console, .card-config,
+      .card-status, .card-health, .card-troubleshooter, .card-console, .card-config,
       .card-auth, .card-channels, .card-onboarding, .card-chat {
         grid-column: span 12;
       }
@@ -1077,6 +1078,7 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
     @media (min-width: 1025px) and (max-width: 1280px) {
       .card-status { grid-column: span 7; }
       .card-health { grid-column: span 5; }
+      .card-troubleshooter { grid-column: span 6; }
       .card-console { grid-column: span 6; }
       .card-config { grid-column: span 6; }
       .card-auth { grid-column: span 4; }
@@ -1084,6 +1086,18 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
       .card-onboarding { grid-column: span 4; }
       .card-chat { grid-column: span 12; }
     }
+
+    /* Troubleshooter status box */
+    .troubleshoot-status {
+      padding: 0.75rem 1rem;
+      background: var(--bg-secondary);
+      border-radius: var(--radius-sm);
+      margin: 0.75rem 0;
+      border-left: 3px solid var(--accent-purple);
+    }
+
+    .troubleshoot-status-text { font-weight: 500; font-size: 0.9rem; }
+    .troubleshoot-progress { color: var(--text-muted); font-size: 0.8rem; margin-top: 0.25rem; }
 
     /* Direct Chat styles */
     .chat-container {
@@ -1461,35 +1475,95 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
         <pre id="healthOut" style="max-height:200px"></pre>
       </div>
 
+      <!-- Troubleshooter Card -->
+      <div class="card card-troubleshooter card-accent-health">
+        <h2><span class="icon">🔧</span> Troubleshooter</h2>
+        <p class="desc">Comprehensive system diagnostics with automatic issue detection and fixes.</p>
+        <div class="btn-group">
+          <button id="troubleshootQuick" class="btn-dark">Quick Check</button>
+          <button id="troubleshootStandard" class="btn-primary">Standard</button>
+          <button id="troubleshootDeep" class="btn-purple">Deep Scan</button>
+        </div>
+        <div class="troubleshoot-status" id="troubleshootStatus" style="display:none;">
+          <div class="troubleshoot-status-text" id="troubleshootStatusText"></div>
+          <div class="troubleshoot-progress" id="troubleshootProgress"></div>
+        </div>
+        <pre id="troubleshootOut" style="max-height:300px"></pre>
+      </div>
+
       <!-- Debug Console Card -->
       <div class="card card-console">
-        <h2><span class="icon">🖥️</span> Debug Console</h2>
-        <p class="desc">Run allowlisted commands for debugging and recovery.</p>
+        <h2><span class="icon">🖥️</span> Command Console</h2>
+        <p class="desc">Run OpenClaw commands for debugging, management, and recovery.</p>
         <div class="console-controls">
           <select id="consoleCmd">
-            <optgroup label="Gateway">
-              <option value="gateway.restart">gateway.restart</option>
-              <option value="gateway.stop">gateway.stop</option>
-              <option value="gateway.start">gateway.start</option>
+            <optgroup label="Troubleshooting">
+              <option value="wrapper.troubleshoot">Troubleshoot (Standard)</option>
+              <option value="wrapper.troubleshoot.quick">Troubleshoot (Quick)</option>
+              <option value="wrapper.troubleshoot.deep">Troubleshoot (Deep)</option>
             </optgroup>
-            <optgroup label="Diagnostics">
-              <option value="openclaw.doctor">openclaw doctor</option>
-              <option value="openclaw.doctor.fix">openclaw doctor --fix</option>
-              <option value="openclaw.status">openclaw status</option>
-              <option value="openclaw.health">openclaw health</option>
-              <option value="openclaw.logs.tail">openclaw logs --tail</option>
+            <optgroup label="Gateway">
+              <option value="gateway.restart">gateway restart</option>
+              <option value="gateway.stop">gateway stop</option>
+              <option value="gateway.start">gateway start</option>
+              <option value="gateway.probe">gateway probe</option>
+            </optgroup>
+            <optgroup label="Core Diagnostics">
+              <option value="openclaw.doctor">doctor</option>
+              <option value="openclaw.doctor.fix">doctor --fix</option>
+              <option value="openclaw.status">status</option>
+              <option value="openclaw.status.all">status --all</option>
+              <option value="openclaw.health">health</option>
+              <option value="openclaw.version">version</option>
+            </optgroup>
+            <optgroup label="Updates">
+              <option value="openclaw.update.check">update check</option>
+              <option value="openclaw.update.run">update run</option>
+            </optgroup>
+            <optgroup label="Logs">
+              <option value="openclaw.logs.tail">logs --tail</option>
+              <option value="openclaw.logs.follow">logs --follow (5s)</option>
+              <option value="openclaw.logs.clear">logs --clear</option>
             </optgroup>
             <optgroup label="Security">
               <option value="openclaw.security.audit">security audit</option>
+              <option value="openclaw.security.audit.deep">security audit --deep</option>
             </optgroup>
             <optgroup label="Configuration">
               <option value="openclaw.config.get">config get</option>
-              <option value="openclaw.version">--version</option>
+              <option value="openclaw.config.list">config list</option>
+              <option value="openclaw.config.validate">config validate</option>
             </optgroup>
-            <optgroup label="Wrapper">
-              <option value="wrapper.fix.dirs">Fix directories</option>
-              <option value="wrapper.fix.permissions">Fix permissions</option>
-              <option value="wrapper.env.check">Check env</option>
+            <optgroup label="Sessions">
+              <option value="openclaw.sessions.list">sessions list</option>
+              <option value="openclaw.sessions.active">sessions active</option>
+              <option value="openclaw.sessions.clear">sessions clear</option>
+            </optgroup>
+            <optgroup label="Agents">
+              <option value="openclaw.agents.list">agents list</option>
+              <option value="openclaw.agents.status">agents status</option>
+              <option value="openclaw.agents.restart">agents restart</option>
+            </optgroup>
+            <optgroup label="Memory">
+              <option value="openclaw.memory.status">memory status</option>
+              <option value="openclaw.memory.stats">memory stats</option>
+              <option value="openclaw.memory.clear">memory clear</option>
+            </optgroup>
+            <optgroup label="Channels">
+              <option value="openclaw.channels.list">channels list</option>
+              <option value="openclaw.channels.status">channels status</option>
+              <option value="openclaw.channels.test">channels test</option>
+            </optgroup>
+            <optgroup label="Pairing">
+              <option value="openclaw.pairing.list">pairing list</option>
+              <option value="openclaw.pairing.pending">pairing pending</option>
+            </optgroup>
+            <optgroup label="Wrapper Utilities">
+              <option value="wrapper.fix.dirs">fix directories</option>
+              <option value="wrapper.fix.permissions">fix permissions</option>
+              <option value="wrapper.env.check">check environment</option>
+              <option value="wrapper.storage.check">storage diagnostics</option>
+              <option value="wrapper.network.check">network diagnostics</option>
             </optgroup>
           </select>
           <input id="consoleArg" placeholder="arg" />
@@ -1975,21 +2049,67 @@ const ALLOWED_CONSOLE_COMMANDS = new Set([
   "gateway.restart",
   "gateway.stop",
   "gateway.start",
+  "gateway.probe",
 
-  // OpenClaw CLI helpers
+  // OpenClaw CLI helpers - Core
   "openclaw.version",
   "openclaw.status",
+  "openclaw.status.all",
   "openclaw.health",
   "openclaw.doctor",
   "openclaw.doctor.fix",
-  "openclaw.security.audit",
+  "openclaw.update.check",
+  "openclaw.update.run",
+
+  // OpenClaw CLI helpers - Logs
   "openclaw.logs.tail",
+  "openclaw.logs.follow",
+  "openclaw.logs.clear",
+
+  // OpenClaw CLI helpers - Security
+  "openclaw.security.audit",
+  "openclaw.security.audit.deep",
+
+  // OpenClaw CLI helpers - Configuration
   "openclaw.config.get",
+  "openclaw.config.list",
+  "openclaw.config.validate",
+
+  // OpenClaw CLI helpers - Sessions
+  "openclaw.sessions.list",
+  "openclaw.sessions.clear",
+  "openclaw.sessions.active",
+
+  // OpenClaw CLI helpers - Agents
+  "openclaw.agents.list",
+  "openclaw.agents.status",
+  "openclaw.agents.restart",
+
+  // OpenClaw CLI helpers - Memory
+  "openclaw.memory.status",
+  "openclaw.memory.stats",
+  "openclaw.memory.clear",
+
+  // OpenClaw CLI helpers - Channels
+  "openclaw.channels.list",
+  "openclaw.channels.status",
+  "openclaw.channels.test",
+
+  // OpenClaw CLI helpers - Pairing
+  "openclaw.pairing.list",
+  "openclaw.pairing.pending",
 
   // Wrapper utilities for fixing common issues
   "wrapper.fix.dirs",
   "wrapper.fix.permissions",
   "wrapper.env.check",
+  "wrapper.storage.check",
+  "wrapper.network.check",
+
+  // Comprehensive troubleshooter
+  "wrapper.troubleshoot",
+  "wrapper.troubleshoot.quick",
+  "wrapper.troubleshoot.deep",
 ]);
 
 app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
@@ -2144,10 +2264,483 @@ app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
       const r = await runCmd(OPENCLAW_NODE, clawArgs(["logs", "--tail", String(lines)]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
     }
+    if (cmd === "openclaw.logs.follow") {
+      // Follow logs for a brief period (5 seconds) to avoid hanging
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["logs", "--follow"]), { timeoutMs: 5000 });
+      return res.json({ ok: true, output: redactSecrets(r.output) + "\n(Log stream ended after 5s timeout)" });
+    }
+    if (cmd === "openclaw.logs.clear") {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["logs", "--clear"]));
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
     if (cmd === "openclaw.config.get") {
       if (!arg) return res.status(400).json({ ok: false, error: "Missing config path" });
       const r = await runCmd(OPENCLAW_NODE, clawArgs(["config", "get", arg]));
       return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+    if (cmd === "openclaw.config.list") {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["config", "list"]));
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+    if (cmd === "openclaw.config.validate") {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["config", "validate"]));
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+
+    // Status commands
+    if (cmd === "openclaw.status.all") {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["status", "--all"]));
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+
+    // Update commands
+    if (cmd === "openclaw.update.check") {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["update", "--check"]));
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+    if (cmd === "openclaw.update.run") {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["update"]), { timeoutMs: 120000 });
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+
+    // Security commands
+    if (cmd === "openclaw.security.audit.deep") {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["security", "audit", "--deep"]), { timeoutMs: 60000 });
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+
+    // Sessions commands
+    if (cmd === "openclaw.sessions.list") {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["sessions", "list"]));
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+    if (cmd === "openclaw.sessions.clear") {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["sessions", "clear"]));
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+    if (cmd === "openclaw.sessions.active") {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["sessions", "active"]));
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+
+    // Agents commands
+    if (cmd === "openclaw.agents.list") {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["agents", "list"]));
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+    if (cmd === "openclaw.agents.status") {
+      const agentName = arg || "main";
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["agents", "status", agentName]));
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+    if (cmd === "openclaw.agents.restart") {
+      const agentName = arg || "main";
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["agents", "restart", agentName]));
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+
+    // Memory commands
+    if (cmd === "openclaw.memory.status") {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["memory", "status"]));
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+    if (cmd === "openclaw.memory.stats") {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["memory", "stats"]));
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+    if (cmd === "openclaw.memory.clear") {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["memory", "clear"]));
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+
+    // Channels commands
+    if (cmd === "openclaw.channels.list") {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["channels", "list"]));
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+    if (cmd === "openclaw.channels.status") {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["channels", "status"]));
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+    if (cmd === "openclaw.channels.test") {
+      const channelName = arg || "";
+      const args = channelName ? ["channels", "test", channelName] : ["channels", "test"];
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(args), { timeoutMs: 30000 });
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+
+    // Pairing commands
+    if (cmd === "openclaw.pairing.list") {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["pairing", "list"]));
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+    if (cmd === "openclaw.pairing.pending") {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["pairing", "list", "--pending"]));
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+
+    // Gateway probe
+    if (cmd === "gateway.probe") {
+      const r = await runCmd(OPENCLAW_NODE, clawArgs(["gateway", "probe"]), { timeoutMs: 30000 });
+      return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: redactSecrets(r.output) });
+    }
+
+    // Wrapper storage check
+    if (cmd === "wrapper.storage.check") {
+      let output = "╔══════════════════════════════════════════════════════════════╗\n";
+      output += "║                    📦 STORAGE DIAGNOSTICS                    ║\n";
+      output += "╚══════════════════════════════════════════════════════════════╝\n\n";
+
+      // Check /data volume
+      output += "━━━ Volume Mount Check ━━━\n";
+      const volumeExists = fs.existsSync("/data");
+      output += `  /data exists: ${volumeExists ? "✓ Yes" : "✗ No"}\n`;
+
+      if (volumeExists) {
+        try {
+          const stats = fs.statSync("/data");
+          output += `  /data type: ${stats.isDirectory() ? "✓ Directory" : "✗ Not a directory"}\n`;
+          output += `  /data mode: ${(stats.mode & 0o777).toString(8)}\n`;
+          output += `  /data uid/gid: ${stats.uid}/${stats.gid}\n`;
+
+          // Test write access
+          const testFile = "/data/.write-test-" + Date.now();
+          try {
+            fs.writeFileSync(testFile, "test");
+            fs.unlinkSync(testFile);
+            output += "  /data writable: ✓ Yes\n";
+          } catch (err) {
+            output += `  /data writable: ✗ No (${err.message})\n`;
+          }
+        } catch (err) {
+          output += `  /data stat error: ${err.message}\n`;
+        }
+      }
+
+      output += "\n━━━ State Directory Check ━━━\n";
+      output += `  STATE_DIR: ${STATE_DIR}\n`;
+      output += `  Under /data: ${STATE_DIR.startsWith("/data") ? "✓ Yes" : "⚠ No"}\n`;
+
+      try {
+        const stateStats = fs.statSync(STATE_DIR);
+        output += `  Exists: ✓ Yes\n`;
+        output += `  Mode: ${(stateStats.mode & 0o777).toString(8)}\n`;
+      } catch {
+        output += "  Exists: ✗ No\n";
+      }
+
+      output += "\n━━━ Workspace Directory Check ━━━\n";
+      output += `  WORKSPACE_DIR: ${WORKSPACE_DIR}\n`;
+      output += `  Under /data: ${WORKSPACE_DIR.startsWith("/data") ? "✓ Yes" : "⚠ No"}\n`;
+
+      try {
+        const workspaceStats = fs.statSync(WORKSPACE_DIR);
+        output += `  Exists: ✓ Yes\n`;
+        output += `  Mode: ${(workspaceStats.mode & 0o777).toString(8)}\n`;
+      } catch {
+        output += "  Exists: ✗ No\n";
+      }
+
+      output += "\n━━━ Persistence Status ━━━\n";
+      output += `  Persistent: ${DATA_PERSISTENCE.persistent ? "✓ Yes" : "✗ No"}\n`;
+      output += `  Storage type: ${DATA_PERSISTENCE.storageType}\n`;
+      if (DATA_PERSISTENCE.warning) {
+        output += `  ⚠ Warning: ${DATA_PERSISTENCE.warning}\n`;
+      }
+
+      output += "\n━━━ Config File Status ━━━\n";
+      const cfgPath = configPath();
+      output += `  Path: ${cfgPath}\n`;
+      try {
+        const cfgStats = fs.statSync(cfgPath);
+        output += `  Exists: ✓ Yes (${cfgStats.size} bytes)\n`;
+        output += `  Mode: ${(cfgStats.mode & 0o777).toString(8)}\n`;
+      } catch {
+        output += "  Exists: ✗ No\n";
+      }
+
+      return res.json({ ok: true, output });
+    }
+
+    // Wrapper network check
+    if (cmd === "wrapper.network.check") {
+      let output = "╔══════════════════════════════════════════════════════════════╗\n";
+      output += "║                    🌐 NETWORK DIAGNOSTICS                    ║\n";
+      output += "╚══════════════════════════════════════════════════════════════╝\n\n";
+
+      output += "━━━ Gateway Status ━━━\n";
+      output += `  Target: ${GATEWAY_TARGET}\n`;
+      output += `  Process running: ${gatewayProc ? "✓ Yes" : "✗ No"}\n`;
+
+      // Test gateway connectivity
+      output += "\n━━━ Gateway Connectivity ━━━\n";
+      try {
+        const response = await fetch(`${GATEWAY_TARGET}/openclaw`, { method: "GET" });
+        output += `  Reachable: ✓ Yes (status ${response.status})\n`;
+      } catch (err) {
+        output += `  Reachable: ✗ No (${err.message})\n`;
+      }
+
+      output += "\n━━━ Port Configuration ━━━\n";
+      output += `  Public port: ${PORT}\n`;
+      output += `  Internal gateway port: ${INTERNAL_GATEWAY_PORT}\n`;
+      output += `  Gateway host: ${INTERNAL_GATEWAY_HOST}\n`;
+
+      output += "\n━━━ Environment ━━━\n";
+      output += `  Process ID: ${process.pid}\n`;
+      output += `  Node version: ${process.version}\n`;
+      output += `  Platform: ${process.platform} (${process.arch})\n`;
+
+      return res.json({ ok: true, output });
+    }
+
+    // Comprehensive troubleshooter
+    if (cmd === "wrapper.troubleshoot" || cmd === "wrapper.troubleshoot.quick" || cmd === "wrapper.troubleshoot.deep") {
+      const isDeep = cmd === "wrapper.troubleshoot.deep";
+      const isQuick = cmd === "wrapper.troubleshoot.quick";
+
+      let output = "╔══════════════════════════════════════════════════════════════╗\n";
+      output += isDeep
+        ? "║           🔬 DEEP TROUBLESHOOTER - COMPREHENSIVE SCAN        ║\n"
+        : isQuick
+        ? "║               ⚡ QUICK TROUBLESHOOTER - FAST CHECK           ║\n"
+        : "║                 🔧 OPENCLAW TROUBLESHOOTER                   ║\n";
+      output += "╚══════════════════════════════════════════════════════════════╝\n\n";
+
+      const issues = [];
+      const fixes = [];
+      let stepNum = 0;
+
+      // Step 1: Configuration check
+      stepNum++;
+      output += `━━━ Step ${stepNum}: Configuration Check ━━━\n`;
+      const configured = isConfigured();
+      if (configured) {
+        output += "  ✓ Configuration file exists\n";
+        try {
+          const cfgContent = fs.readFileSync(configPath(), "utf8");
+          const cfg = JSON.parse(cfgContent);
+          output += "  ✓ Configuration is valid JSON\n";
+          if (cfg.auth) {
+            output += `  ✓ Auth configured: ${cfg.auth.provider || "unknown"}\n`;
+          } else {
+            output += "  ⚠ Auth not configured\n";
+            issues.push("Auth provider not configured");
+          }
+        } catch (err) {
+          output += `  ✗ Configuration parse error: ${err.message}\n`;
+          issues.push("Configuration file is invalid JSON");
+          fixes.push("Reset configuration and run setup again");
+        }
+      } else {
+        output += "  ✗ Configuration file missing\n";
+        issues.push("OpenClaw is not configured");
+        fixes.push("Run the setup wizard to configure OpenClaw");
+      }
+      output += "\n";
+
+      // Step 2: Directory structure
+      stepNum++;
+      output += `━━━ Step ${stepNum}: Directory Structure ━━━\n`;
+      const requiredDirs = [
+        { path: STATE_DIR, name: "State directory" },
+        { path: WORKSPACE_DIR, name: "Workspace directory" },
+        { path: path.join(STATE_DIR, "credentials"), name: "Credentials directory" },
+        { path: path.join(STATE_DIR, "identity"), name: "Identity directory" },
+        { path: path.join(STATE_DIR, "logs"), name: "Logs directory" },
+        { path: path.join(STATE_DIR, "sessions"), name: "Sessions directory" },
+      ];
+
+      for (const dir of requiredDirs) {
+        try {
+          if (fs.existsSync(dir.path)) {
+            const stats = fs.statSync(dir.path);
+            const mode = (stats.mode & 0o777).toString(8);
+            if (mode === "700" || mode === "755" || mode === "750") {
+              output += `  ✓ ${dir.name}: exists (mode ${mode})\n`;
+            } else {
+              output += `  ⚠ ${dir.name}: exists but mode is ${mode} (should be 700)\n`;
+              issues.push(`${dir.name} has insecure permissions (${mode})`);
+              fixes.push(`Run 'Fix permissions' to set ${dir.path} to 700`);
+            }
+          } else {
+            output += `  ✗ ${dir.name}: missing\n`;
+            issues.push(`${dir.name} does not exist`);
+            fixes.push(`Run 'Fix directories' to create ${dir.path}`);
+          }
+        } catch (err) {
+          output += `  ✗ ${dir.name}: error (${err.message})\n`;
+          issues.push(`Cannot access ${dir.name}`);
+        }
+      }
+      output += "\n";
+
+      // Step 3: Storage persistence
+      stepNum++;
+      output += `━━━ Step ${stepNum}: Storage Persistence ━━━\n`;
+      if (DATA_PERSISTENCE.persistent) {
+        output += `  ✓ Using persistent storage (${DATA_PERSISTENCE.storageType})\n`;
+      } else {
+        output += `  ✗ NOT using persistent storage!\n`;
+        output += `    Storage type: ${DATA_PERSISTENCE.storageType}\n`;
+        issues.push("Data will not persist across restarts");
+        fixes.push("Add a Railway volume mounted at /data");
+      }
+      output += "\n";
+
+      // Step 4: Gateway status
+      stepNum++;
+      output += `━━━ Step ${stepNum}: Gateway Status ━━━\n`;
+      output += `  Process: ${gatewayProc ? "✓ Running" : "✗ Not running"}\n`;
+      if (!gatewayProc && configured) {
+        issues.push("Gateway is not running");
+        fixes.push("Run 'gateway.start' to start the gateway");
+      }
+
+      // Test gateway connectivity
+      try {
+        const response = await fetch(`${GATEWAY_TARGET}/openclaw`, { method: "GET" });
+        output += `  Connectivity: ✓ Reachable (status ${response.status})\n`;
+      } catch (err) {
+        output += `  Connectivity: ✗ Unreachable (${err.message})\n`;
+        if (configured) {
+          issues.push("Gateway is unreachable");
+          fixes.push("Restart the gateway or check port configuration");
+        }
+      }
+      output += "\n";
+
+      // Step 5: OpenClaw CLI check
+      if (!isQuick) {
+        stepNum++;
+        output += `━━━ Step ${stepNum}: OpenClaw CLI ━━━\n`;
+        const versionResult = await runCmd(OPENCLAW_NODE, clawArgs(["--version"]));
+        if (versionResult.code === 0) {
+          output += `  ✓ CLI accessible: ${versionResult.output.trim()}\n`;
+        } else {
+          output += `  ✗ CLI error: ${versionResult.output.slice(0, 100)}\n`;
+          issues.push("OpenClaw CLI is not accessible");
+        }
+        output += "\n";
+      }
+
+      // Step 6: Doctor check (standard and deep)
+      if (!isQuick) {
+        stepNum++;
+        output += `━━━ Step ${stepNum}: OpenClaw Doctor ━━━\n`;
+        const doctorResult = await runCmd(OPENCLAW_NODE, clawArgs(["doctor"]));
+        const doctorOutput = redactSecrets(doctorResult.output);
+
+        // Parse doctor output for issues
+        const doctorLines = doctorOutput.split("\n");
+        let doctorIssueCount = 0;
+        for (const line of doctorLines) {
+          if (line.includes("CRITICAL") || line.includes("ERROR") || line.includes("✗")) {
+            doctorIssueCount++;
+            if (doctorIssueCount <= 3) {
+              output += `  ⚠ ${line.trim().slice(0, 70)}\n`;
+            }
+          }
+        }
+
+        if (doctorResult.code === 0 && doctorIssueCount === 0) {
+          output += "  ✓ No issues detected by doctor\n";
+        } else {
+          output += `  ⚠ Doctor found ${doctorIssueCount} issue(s)\n`;
+          if (doctorIssueCount > 0) {
+            issues.push(`OpenClaw doctor reported ${doctorIssueCount} issue(s)`);
+            fixes.push("Run 'openclaw.doctor.fix' to attempt automatic fixes");
+          }
+        }
+        output += "\n";
+      }
+
+      // Step 7: Security audit (deep only)
+      if (isDeep) {
+        stepNum++;
+        output += `━━━ Step ${stepNum}: Security Audit (Deep) ━━━\n`;
+        const auditResult = await runCmd(OPENCLAW_NODE, clawArgs(["security", "audit", "--deep"]), { timeoutMs: 60000 });
+        const auditOutput = redactSecrets(auditResult.output);
+
+        // Parse for critical security issues
+        const auditLines = auditOutput.split("\n");
+        let criticalCount = 0;
+        let warnCount = 0;
+        for (const line of auditLines) {
+          if (line.includes("CRITICAL")) criticalCount++;
+          if (line.includes("WARN")) warnCount++;
+        }
+
+        output += `  Critical: ${criticalCount}\n`;
+        output += `  Warnings: ${warnCount}\n`;
+
+        if (criticalCount > 0) {
+          issues.push(`Security audit found ${criticalCount} critical issue(s)`);
+          fixes.push("Review security audit output and address critical issues");
+        }
+        output += "\n";
+      }
+
+      // Step 8: Channel status (standard and deep)
+      if (!isQuick) {
+        stepNum++;
+        output += `━━━ Step ${stepNum}: Channel Status ━━━\n`;
+        const channelsResult = await runCmd(OPENCLAW_NODE, clawArgs(["channels", "status"]));
+        if (channelsResult.code === 0) {
+          const lines = channelsResult.output.split("\n").filter(l => l.trim());
+          for (const line of lines.slice(0, 5)) {
+            output += `  ${line.trim()}\n`;
+          }
+        } else {
+          output += "  ⚠ Could not retrieve channel status\n";
+        }
+        output += "\n";
+      }
+
+      // Step 9: Memory status (deep only)
+      if (isDeep) {
+        stepNum++;
+        output += `━━━ Step ${stepNum}: Memory Plugin Status ━━━\n`;
+        const memoryResult = await runCmd(OPENCLAW_NODE, clawArgs(["memory", "status"]));
+        if (memoryResult.code === 0) {
+          output += `  ${redactSecrets(memoryResult.output).slice(0, 200)}\n`;
+        } else {
+          output += "  ⚠ Memory plugin status unavailable\n";
+        }
+        output += "\n";
+      }
+
+      // Summary
+      output += "╔══════════════════════════════════════════════════════════════╗\n";
+      if (issues.length === 0) {
+        output += "║                    ✅ ALL CHECKS PASSED                     ║\n";
+      } else {
+        output += `║              ⚠️  FOUND ${issues.length} ISSUE(S) TO ADDRESS                  ║\n`;
+      }
+      output += "╚══════════════════════════════════════════════════════════════╝\n\n";
+
+      if (issues.length > 0) {
+        output += "━━━ Issues Found ━━━\n";
+        for (let i = 0; i < issues.length; i++) {
+          output += `  ${i + 1}. ${issues[i]}\n`;
+        }
+        output += "\n━━━ Suggested Fixes ━━━\n";
+        for (let i = 0; i < fixes.length; i++) {
+          output += `  ${i + 1}. ${fixes[i]}\n`;
+        }
+      }
+
+      output += "\n━━━ Quick Actions ━━━\n";
+      output += "  • Run 'Fix All Issues' button for automatic repair\n";
+      output += "  • Use /doctor command in chat for diagnostics\n";
+      output += "  • Check logs with 'openclaw.logs.tail' command\n";
+
+      return res.json({
+        ok: issues.length === 0,
+        issues,
+        fixes,
+        output
+      });
     }
 
     return res.status(400).json({ ok: false, error: "Unhandled command" });
