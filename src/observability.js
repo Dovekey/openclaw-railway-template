@@ -36,6 +36,24 @@ const currentLogLevel = LOG_LEVELS[LOG_LEVEL] ?? LOG_LEVELS.info;
 // Metrics Storage (in-memory, designed for Railway's ephemeral containers)
 // ============================================================================
 
+// Supported messaging channels
+const SUPPORTED_CHANNELS = [
+  "whatsapp",
+  "telegram",
+  "discord",
+  "slack",
+  "signal",
+  "imessage",
+  "google-chat",
+  "teams",
+  "mattermost",
+  "matrix",
+  "zalo",
+  "zalo-personal",
+  "bluebubbles",
+  "webchat",
+];
+
 const metrics = {
   // Request metrics
   requests: {
@@ -63,6 +81,14 @@ const metrics = {
     crashCount: 0,
     lastStart: null,
     uptime: 0,
+  },
+  // Messaging channel metrics
+  messaging: {
+    received: new Map(),    // channel -> count
+    sent: new Map(),        // channel -> count
+    errors: new Map(),      // channel -> count
+    latency: new Map(),     // channel -> total ms
+    lastActivity: new Map(), // channel -> timestamp
   },
   // System metrics snapshot
   system: {
@@ -381,6 +407,112 @@ export function trackGatewayCrash(code, signal) {
     crashCount: metrics.gateway.crashCount,
     uptimeMs: metrics.gateway.lastStart ? Date.now() - metrics.gateway.lastStart : 0,
   });
+}
+
+// ============================================================================
+// Messaging Channel Observability
+// ============================================================================
+
+/**
+ * Track an incoming message from a messaging channel
+ */
+export function trackMessageReceived(channel, context = {}) {
+  const normalizedChannel = channel.toLowerCase();
+  metrics.messaging.received.set(
+    normalizedChannel,
+    (metrics.messaging.received.get(normalizedChannel) || 0) + 1
+  );
+  metrics.messaging.lastActivity.set(normalizedChannel, Date.now());
+
+  logger.info("Message received", {
+    channel: normalizedChannel,
+    chatId: context.chatId,
+    userId: context.userId,
+    traceId: context.traceId,
+  });
+}
+
+/**
+ * Track an outgoing message to a messaging channel
+ */
+export function trackMessageSent(channel, context = {}) {
+  const normalizedChannel = channel.toLowerCase();
+  metrics.messaging.sent.set(
+    normalizedChannel,
+    (metrics.messaging.sent.get(normalizedChannel) || 0) + 1
+  );
+  metrics.messaging.lastActivity.set(normalizedChannel, Date.now());
+
+  if (context.durationMs) {
+    metrics.messaging.latency.set(
+      normalizedChannel,
+      (metrics.messaging.latency.get(normalizedChannel) || 0) + context.durationMs
+    );
+  }
+
+  logger.info("Message sent", {
+    channel: normalizedChannel,
+    chatId: context.chatId,
+    durationMs: context.durationMs,
+    traceId: context.traceId,
+  });
+}
+
+/**
+ * Track a messaging channel error
+ */
+export function trackMessageError(channel, error, context = {}) {
+  const normalizedChannel = channel.toLowerCase();
+  metrics.messaging.errors.set(
+    normalizedChannel,
+    (metrics.messaging.errors.get(normalizedChannel) || 0) + 1
+  );
+
+  logger.error("Messaging error", {
+    channel: normalizedChannel,
+    error: error.message,
+    code: error.code,
+    chatId: context.chatId,
+    traceId: context.traceId,
+  });
+
+  trackError(error, { context: `messaging_${normalizedChannel}`, ...context });
+}
+
+/**
+ * Get messaging channel statistics
+ */
+export function getMessagingStats() {
+  const channels = {};
+
+  for (const channel of SUPPORTED_CHANNELS) {
+    const received = metrics.messaging.received.get(channel) || 0;
+    const sent = metrics.messaging.sent.get(channel) || 0;
+    const errors = metrics.messaging.errors.get(channel) || 0;
+    const totalLatency = metrics.messaging.latency.get(channel) || 0;
+    const lastActivity = metrics.messaging.lastActivity.get(channel);
+
+    if (received > 0 || sent > 0 || errors > 0) {
+      channels[channel] = {
+        received,
+        sent,
+        errors,
+        avgLatencyMs: sent > 0 ? Math.round((totalLatency / sent) * 100) / 100 : null,
+        lastActivity: lastActivity ? new Date(lastActivity).toISOString() : null,
+      };
+    }
+  }
+
+  return {
+    supportedChannels: SUPPORTED_CHANNELS,
+    activeChannels: Object.keys(channels),
+    stats: channels,
+    totals: {
+      received: Array.from(metrics.messaging.received.values()).reduce((a, b) => a + b, 0),
+      sent: Array.from(metrics.messaging.sent.values()).reduce((a, b) => a + b, 0),
+      errors: Array.from(metrics.messaging.errors.values()).reduce((a, b) => a + b, 0),
+    },
+  };
 }
 
 // ============================================================================
