@@ -91,6 +91,111 @@ function isConfigured() {
   }
 }
 
+// Auth groups definition (used for both HTML rendering and API response)
+// These match OpenClaw's own auth-choice grouping logic.
+const AUTH_GROUPS = [
+  { value: "openai", label: "OpenAI", hint: "Codex OAuth + API key", keyType: "api-key", options: [
+    { value: "codex-cli", label: "OpenAI Codex OAuth (Codex CLI)", keyType: "oauth" },
+    { value: "openai-codex", label: "OpenAI Codex (ChatGPT OAuth)", keyType: "oauth" },
+    { value: "openai-api-key", label: "OpenAI API key", keyType: "api-key" }
+  ]},
+  { value: "anthropic", label: "Anthropic", hint: "Claude Code CLI + API key", keyType: "api-key", options: [
+    { value: "claude-cli", label: "Anthropic token (Claude Code CLI)", keyType: "oauth" },
+    { value: "token", label: "Anthropic token (paste setup-token)", keyType: "token" },
+    { value: "apiKey", label: "Anthropic API key", keyType: "api-key" }
+  ]},
+  { value: "google", label: "Google", hint: "Gemini API key + OAuth", keyType: "api-key", options: [
+    { value: "gemini-api-key", label: "Google Gemini API key", keyType: "api-key" },
+    { value: "google-antigravity", label: "Google Antigravity OAuth", keyType: "oauth" },
+    { value: "google-gemini-cli", label: "Google Gemini CLI OAuth", keyType: "oauth" }
+  ]},
+  { value: "openrouter", label: "OpenRouter", hint: "API key", keyType: "api-key", options: [
+    { value: "openrouter-api-key", label: "OpenRouter API key", keyType: "api-key" }
+  ]},
+  { value: "ai-gateway", label: "Vercel AI Gateway", hint: "API key", keyType: "api-key", options: [
+    { value: "ai-gateway-api-key", label: "Vercel AI Gateway API key", keyType: "api-key" }
+  ]},
+  { value: "moonshot", label: "Moonshot AI", hint: "Kimi K2 + Kimi Code", keyType: "api-key", options: [
+    { value: "moonshot-api-key", label: "Moonshot AI API key", keyType: "api-key" },
+    { value: "kimi-code-api-key", label: "Kimi Code API key", keyType: "api-key" }
+  ]},
+  { value: "zai", label: "Z.AI (GLM 4.7)", hint: "API key", keyType: "api-key", options: [
+    { value: "zai-api-key", label: "Z.AI (GLM 4.7) API key", keyType: "api-key" }
+  ]},
+  { value: "minimax", label: "MiniMax", hint: "M2.1 (recommended)", keyType: "api-key", options: [
+    { value: "minimax-api", label: "MiniMax M2.1", keyType: "api-key" },
+    { value: "minimax-api-lightning", label: "MiniMax M2.1 Lightning", keyType: "api-key" }
+  ]},
+  { value: "qwen", label: "Qwen", hint: "OAuth", keyType: "oauth", options: [
+    { value: "qwen-portal", label: "Qwen OAuth", keyType: "oauth" }
+  ]},
+  { value: "copilot", label: "Copilot", hint: "GitHub + local proxy", keyType: "oauth", options: [
+    { value: "github-copilot", label: "GitHub Copilot (GitHub device login)", keyType: "oauth" },
+    { value: "copilot-proxy", label: "Copilot Proxy (local)", keyType: "proxy" }
+  ]},
+  { value: "synthetic", label: "Synthetic", hint: "Anthropic-compatible (multi-model)", keyType: "api-key", options: [
+    { value: "synthetic-api-key", label: "Synthetic API key", keyType: "api-key" }
+  ]},
+  { value: "opencode-zen", label: "OpenCode Zen", hint: "API key", keyType: "api-key", options: [
+    { value: "opencode-zen", label: "OpenCode Zen (multi-model proxy)", keyType: "api-key" }
+  ]}
+];
+
+// Helper to find auth option details by value
+function findAuthOption(authChoice) {
+  for (const group of AUTH_GROUPS) {
+    for (const opt of group.options) {
+      if (opt.value === authChoice) {
+        return { group, option: opt };
+      }
+    }
+  }
+  return null;
+}
+
+// Load existing config values for form pre-population (non-sensitive fields only)
+function loadConfigForForm() {
+  const result = {
+    authProvider: null,
+    authChoice: null,
+    authKeyType: null,
+    flow: "quickstart",
+    hasSecret: false,
+    // Channel configs (non-sensitive)
+    telegramEnabled: false,
+    discordEnabled: false,
+    slackEnabled: false,
+  };
+
+  try {
+    const cfgPath = configPath();
+    if (!fs.existsSync(cfgPath)) return result;
+
+    const content = fs.readFileSync(cfgPath, "utf8");
+    const cfg = JSON.parse(content);
+
+    // Load auth settings
+    if (cfg.auth) {
+      result.authProvider = cfg.auth.provider || null;
+      result.authChoice = cfg.auth.choice || null;
+      result.authKeyType = cfg.auth.keyType || null;
+      // Don't load the actual secret, just indicate if one is set
+      result.hasSecret = Boolean(cfg.auth.secretSet);
+    }
+
+    // Load channel enabled states
+    if (cfg.channels) {
+      result.telegramEnabled = cfg.channels.telegram?.enabled ?? false;
+      result.discordEnabled = cfg.channels.discord?.enabled ?? false;
+      result.slackEnabled = cfg.channels.slack?.enabled ?? false;
+    }
+  } catch {
+    // Config doesn't exist or is invalid, use defaults
+  }
+
+  return result;
+}
+
 let gatewayProc = null;
 let gatewayStarting = null;
 
@@ -394,8 +499,55 @@ app.get("/setup/app.js", requireSetupAuth, (_req, res) => {
   res.send(fs.readFileSync(path.join(process.cwd(), "src", "setup-app.js"), "utf8"));
 });
 
+// Helper to generate HTML for auth group options
+function renderAuthGroupOptions(selectedGroup) {
+  return AUTH_GROUPS.map(g => {
+    const selected = g.value === selectedGroup ? ' selected' : '';
+    const label = g.label + (g.hint ? ' - ' + g.hint : '');
+    return `<option value="${g.value}"${selected}>${label}</option>`;
+  }).join('\n        ');
+}
+
+// Helper to generate HTML for all auth choice options (grouped by optgroup)
+function renderAuthChoiceOptions(selectedChoice) {
+  return AUTH_GROUPS.map(g => {
+    const options = g.options.map(o => {
+      const selected = o.value === selectedChoice ? ' selected' : '';
+      const label = o.label + (o.hint ? ' - ' + o.hint : '');
+      return `<option value="${o.value}" data-group="${g.value}" data-keytype="${o.keyType}"${selected}>${label}</option>`;
+    }).join('\n          ');
+    return `<optgroup label="${g.label}" data-group="${g.value}">\n          ${options}\n        </optgroup>`;
+  }).join('\n        ');
+}
+
+// Helper to generate flow options
+function renderFlowOptions(selectedFlow) {
+  const flows = ['quickstart', 'advanced', 'manual'];
+  return flows.map(f => {
+    const selected = f === selectedFlow ? ' selected' : '';
+    return `<option value="${f}"${selected}>${f}</option>`;
+  }).join('\n        ');
+}
+
 app.get("/setup", requireSetupAuth, (_req, res) => {
-  // No inline <script>: serve JS from /setup/app.js to avoid any encoding/template-literal issues.
+  // Load existing config values for pre-population
+  const formConfig = loadConfigForForm();
+
+  // Determine which group should be selected (based on saved choice or default to first)
+  let selectedGroup = AUTH_GROUPS[0].value;
+  if (formConfig.authChoice) {
+    const found = findAuthOption(formConfig.authChoice);
+    if (found) selectedGroup = found.group.value;
+  }
+
+  // Generate the static HTML options
+  const authGroupOptionsHtml = renderAuthGroupOptions(selectedGroup);
+  const authChoiceOptionsHtml = renderAuthChoiceOptions(formConfig.authChoice);
+  const flowOptionsHtml = renderFlowOptions(formConfig.flow || 'quickstart');
+
+  // Embed auth groups as JSON for JavaScript cascading behavior
+  const authGroupsJson = JSON.stringify(AUTH_GROUPS);
+
   res.type("html").send(`<!doctype html>
 <html>
 <head>
@@ -410,6 +562,8 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
     button { padding: 0.8rem 1.2rem; border-radius: 10px; border: 0; background: #111; color: #fff; font-weight: 700; cursor: pointer; }
     code { background: #f6f6f6; padding: 0.1rem 0.3rem; border-radius: 6px; }
     .muted { color: #555; }
+    .config-hint { font-size: 0.85em; color: #666; margin-top: 0.25rem; }
+    .has-secret { color: #065f46; }
   </style>
 </head>
 <body>
@@ -471,19 +625,23 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
     <h2>1) Model/auth provider</h2>
     <p class="muted">Matches the groups shown in the terminal onboarding.</p>
     <label>Provider group</label>
-    <select id="authGroup"></select>
+    <select id="authGroup">
+        ${authGroupOptionsHtml}
+    </select>
 
     <label>Auth method</label>
-    <select id="authChoice"></select>
+    <select id="authChoice">
+        ${authChoiceOptionsHtml}
+    </select>
+    ${formConfig.authKeyType ? `<div class="config-hint">Saved key type: <code>${formConfig.authKeyType}</code></div>` : ''}
 
     <label>Key / Token (if required)</label>
     <input id="authSecret" type="password" placeholder="Paste API key / token if applicable" />
+    ${formConfig.hasSecret ? '<div class="config-hint has-secret">A secret is already configured. Leave blank to keep existing.</div>' : ''}
 
     <label>Wizard flow</label>
     <select id="flow">
-      <option value="quickstart">quickstart</option>
-      <option value="advanced">advanced</option>
-      <option value="manual">manual</option>
+        ${flowOptionsHtml}
     </select>
   </div>
 
@@ -493,12 +651,14 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
 
     <label>Telegram bot token (optional)</label>
     <input id="telegramToken" type="password" placeholder="123456:ABC..." />
+    ${formConfig.telegramEnabled ? '<div class="config-hint has-secret">Telegram is currently enabled in config.</div>' : ''}
     <div class="muted" style="margin-top: 0.25rem">
       Get it from BotFather: open Telegram, message <code>@BotFather</code>, run <code>/newbot</code>, then copy the token.
     </div>
 
     <label>Discord bot token (optional)</label>
     <input id="discordToken" type="password" placeholder="Bot token" />
+    ${formConfig.discordEnabled ? '<div class="config-hint has-secret">Discord is currently enabled in config.</div>' : ''}
     <div class="muted" style="margin-top: 0.25rem">
       Get it from the Discord Developer Portal: create an application, add a Bot, then copy the Bot Token.<br/>
       <strong>Important:</strong> Enable <strong>MESSAGE CONTENT INTENT</strong> in Bot → Privileged Gateway Intents, or the bot will crash on startup.
@@ -506,6 +666,7 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
 
     <label>Slack bot token (optional)</label>
     <input id="slackBotToken" type="password" placeholder="xoxb-..." />
+    ${formConfig.slackEnabled ? '<div class="config-hint has-secret">Slack is currently enabled in config.</div>' : ''}
 
     <label>Slack app token (optional)</label>
     <input id="slackAppToken" type="password" placeholder="xapp-..." />
@@ -525,6 +686,8 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
     </p>
   </div>
 
+  <!-- Embed auth groups data for JavaScript cascading behavior -->
+  <script id="authGroupsData" type="application/json">${authGroupsJson}</script>
   <script src="/setup/app.js"></script>
 </body>
 </html>`);
@@ -534,62 +697,22 @@ app.get("/setup/api/status", requireSetupAuth, async (_req, res) => {
   const version = await runCmd(OPENCLAW_NODE, clawArgs(["--version"]));
   const channelsHelp = await runCmd(OPENCLAW_NODE, clawArgs(["channels", "add", "--help"]));
 
-  // We reuse OpenClaw's own auth-choice grouping logic indirectly by hardcoding the same group defs.
-  // This is intentionally minimal; later we can parse the CLI help output to stay perfectly in sync.
-  const authGroups = [
-    { value: "openai", label: "OpenAI", hint: "Codex OAuth + API key", options: [
-      { value: "codex-cli", label: "OpenAI Codex OAuth (Codex CLI)" },
-      { value: "openai-codex", label: "OpenAI Codex (ChatGPT OAuth)" },
-      { value: "openai-api-key", label: "OpenAI API key" }
-    ]},
-    { value: "anthropic", label: "Anthropic", hint: "Claude Code CLI + API key", options: [
-      { value: "claude-cli", label: "Anthropic token (Claude Code CLI)" },
-      { value: "token", label: "Anthropic token (paste setup-token)" },
-      { value: "apiKey", label: "Anthropic API key" }
-    ]},
-    { value: "google", label: "Google", hint: "Gemini API key + OAuth", options: [
-      { value: "gemini-api-key", label: "Google Gemini API key" },
-      { value: "google-antigravity", label: "Google Antigravity OAuth" },
-      { value: "google-gemini-cli", label: "Google Gemini CLI OAuth" }
-    ]},
-    { value: "openrouter", label: "OpenRouter", hint: "API key", options: [
-      { value: "openrouter-api-key", label: "OpenRouter API key" }
-    ]},
-    { value: "ai-gateway", label: "Vercel AI Gateway", hint: "API key", options: [
-      { value: "ai-gateway-api-key", label: "Vercel AI Gateway API key" }
-    ]},
-    { value: "moonshot", label: "Moonshot AI", hint: "Kimi K2 + Kimi Code", options: [
-      { value: "moonshot-api-key", label: "Moonshot AI API key" },
-      { value: "kimi-code-api-key", label: "Kimi Code API key" }
-    ]},
-    { value: "zai", label: "Z.AI (GLM 4.7)", hint: "API key", options: [
-      { value: "zai-api-key", label: "Z.AI (GLM 4.7) API key" }
-    ]},
-    { value: "minimax", label: "MiniMax", hint: "M2.1 (recommended)", options: [
-      { value: "minimax-api", label: "MiniMax M2.1" },
-      { value: "minimax-api-lightning", label: "MiniMax M2.1 Lightning" }
-    ]},
-    { value: "qwen", label: "Qwen", hint: "OAuth", options: [
-      { value: "qwen-portal", label: "Qwen OAuth" }
-    ]},
-    { value: "copilot", label: "Copilot", hint: "GitHub + local proxy", options: [
-      { value: "github-copilot", label: "GitHub Copilot (GitHub device login)" },
-      { value: "copilot-proxy", label: "Copilot Proxy (local)" }
-    ]},
-    { value: "synthetic", label: "Synthetic", hint: "Anthropic-compatible (multi-model)", options: [
-      { value: "synthetic-api-key", label: "Synthetic API key" }
-    ]},
-    { value: "opencode-zen", label: "OpenCode Zen", hint: "API key", options: [
-      { value: "opencode-zen", label: "OpenCode Zen (multi-model proxy)" }
-    ]}
-  ];
+  // Load existing config for status display
+  const formConfig = loadConfigForForm();
 
   res.json({
     configured: isConfigured(),
     gatewayTarget: GATEWAY_TARGET,
     openclawVersion: version.output.trim(),
     channelsAddHelp: channelsHelp.output,
-    authGroups,
+    authGroups: AUTH_GROUPS,
+    // Include saved config info (non-sensitive)
+    savedAuth: {
+      provider: formConfig.authProvider,
+      choice: formConfig.authChoice,
+      keyType: formConfig.authKeyType,
+      hasSecret: formConfig.hasSecret,
+    },
   });
 });
 
@@ -702,6 +825,20 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
     await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.auth.token", OPENCLAW_GATEWAY_TOKEN]));
     await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.bind", "loopback"]));
     await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "gateway.port", String(INTERNAL_GATEWAY_PORT)]));
+
+    // Save auth info explicitly (provider, choice, keyType) so we don't have to infer from the key
+    if (payload.authChoice) {
+      const authInfo = findAuthOption(payload.authChoice);
+      const authConfig = {
+        choice: payload.authChoice,
+        provider: authInfo ? authInfo.group.value : null,
+        keyType: authInfo ? authInfo.option.keyType : null,
+        // Mark that a secret was provided (don't store the actual secret here)
+        secretSet: Boolean((payload.authSecret || "").trim()),
+      };
+      await runCmd(OPENCLAW_NODE, clawArgs(["config", "set", "--json", "auth", JSON.stringify(authConfig)]));
+      extra += `\n[auth] Saved auth config: provider=${authConfig.provider}, choice=${authConfig.choice}, keyType=${authConfig.keyType}\n`;
+    }
 
     // Apply security hardening configuration
     // Security: require pairing for DM policy (users must be approved before chatting)
