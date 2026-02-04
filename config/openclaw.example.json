@@ -11,12 +11,65 @@
           "memoryLimit": "512m",
           "cpuLimit": "0.5"
         }
+      },
+      "permissions": {
+        "fileSystem": {
+          "allowedPaths": ["/app/workspace"],
+          "blockedPaths": ["~/.ssh", "~/.gitconfig", "/etc", "/var"],
+          "maxFileSize": "10mb"
+        },
+        "network": {
+          "allowExternalRequests": false,
+          "blockedIPs": [
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16",
+            "127.0.0.0/8",
+            "169.254.0.0/16"
+          ],
+          "blockedHosts": [
+            "localhost",
+            "metadata.google.internal",
+            "169.254.169.254"
+          ]
+        },
+        "shell": {
+          "enabled": false,
+          "requireApproval": true
+        }
       }
     }
   },
   "security": {
     "dmPolicy": "pairing",
-    "requireApprovalFor": ["file_write", "network_request", "shell_command"]
+    "requireApprovalFor": ["file_write", "network_request", "shell_command"],
+    "inputValidation": {
+      "maxLength": 10000,
+      "maxFileUploadSize": "10mb",
+      "rejectPatterns": [
+        "ignore previous",
+        "disregard instructions",
+        "reveal your prompt",
+        "output your instructions",
+        "you are now"
+      ]
+    },
+    "outputFiltering": {
+      "redactSecrets": true,
+      "redactPII": true,
+      "blockExecutableCode": false
+    },
+    "rateLimiting": {
+      "requestsPerMinute": 60,
+      "tokensPerMinute": 40000,
+      "dailyBudgetUSD": 50,
+      "monthlyBudgetUSD": 500
+    },
+    "promptInjection": {
+      "detectIndirect": true,
+      "treatExternalContentAsData": true,
+      "ignoreEncodedInstructions": true
+    }
   },
   "gateway": {
     "bind": "loopback",
@@ -45,6 +98,20 @@
   },
   "logging": {
     "level": "info",
-    "format": "json"
+    "format": "json",
+    "auditEvents": [
+      "auth.success",
+      "auth.failure",
+      "config.change",
+      "pairing.approve",
+      "tool.execute",
+      "security.violation"
+    ],
+    "redactSecrets": true
+  },
+  "memory": {
+    "persistSensitiveData": false,
+    "sessionIsolation": true,
+    "validateContextOnLoad": true
   }
 }

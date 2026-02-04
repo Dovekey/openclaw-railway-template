@@ -198,6 +198,25 @@ async function restartGateway() {
 }
 
 function requireSetupAuth(req, res, next) {
+  // Get client IP (handle proxies)
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
+
+  // Check rate limit before processing auth
+  const rateCheck = checkRateLimit(ip);
+  if (!rateCheck.allowed) {
+    auditLog("AUTH_RATE_LIMITED", { ip, path: req.path });
+    res.setHeader("Retry-After", Math.ceil(rateCheck.retryAfterMs / 1000));
+    return res.status(429).type("text/plain").send("Too many authentication attempts. Please try again later.");
+  }
+
+  // Check request rate limit
+  const requestRateCheck = checkRequestRateLimit(ip);
+  if (!requestRateCheck.allowed) {
+    auditLog("REQUEST_RATE_LIMITED", { ip, path: req.path });
+    res.setHeader("Retry-After", Math.ceil(requestRateCheck.retryAfterMs / 1000));
+    return res.status(429).type("text/plain").send("Too many requests. Please try again later.");
+  }
+
   if (!SETUP_PASSWORD) {
     return res
       .status(500)
@@ -215,14 +234,144 @@ function requireSetupAuth(req, res, next) {
   const idx = decoded.indexOf(":");
   const password = idx >= 0 ? decoded.slice(idx + 1) : "";
   if (password !== SETUP_PASSWORD) {
+    recordAuthFailure(ip);
+    auditLog("AUTH_FAILURE", { ip, path: req.path });
     res.set("WWW-Authenticate", 'Basic realm="OpenClaw Setup"');
     return res.status(401).send("Invalid password");
   }
+
+  // Auth successful
+  recordAuthSuccess(ip);
+  auditLog("AUTH_SUCCESS", { ip, path: req.path });
   return next();
 }
 
 const app = express();
 app.disable("x-powered-by");
+
+// === SECURITY HEADERS MIDDLEWARE ===
+// Defense-in-depth: Add security headers to all responses
+app.use((_req, res, next) => {
+  // Prevent MIME type sniffing
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  // Prevent clickjacking
+  res.setHeader("X-Frame-Options", "DENY");
+  // XSS protection (legacy browsers)
+  res.setHeader("X-XSS-Protection", "1; mode=block");
+  // Referrer policy - don't leak URLs
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  // Permissions policy - restrict browser features
+  res.setHeader("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+  // Content Security Policy for /setup pages
+  if (_req.path.startsWith("/setup")) {
+    res.setHeader(
+      "Content-Security-Policy",
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'self';"
+    );
+  }
+  next();
+});
+
+// === RATE LIMITING STATE ===
+// Brute force protection for authentication endpoints
+const rateLimitState = {
+  // Map of IP -> { attempts: number, lastAttempt: timestamp, lockedUntil: timestamp }
+  authAttempts: new Map(),
+  // Map of IP -> { requests: number[], windowStart: timestamp }
+  requestCounts: new Map(),
+};
+
+const RATE_LIMIT_CONFIG = {
+  maxAuthAttempts: 5,           // Max failed auth attempts before lockout
+  authLockoutMs: 15 * 60 * 1000, // 15 minute lockout
+  authWindowMs: 5 * 60 * 1000,   // 5 minute window for counting attempts
+  maxRequestsPerMinute: 30,      // Max requests per minute to /setup endpoints
+  requestWindowMs: 60 * 1000,    // 1 minute window
+};
+
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const state = rateLimitState.authAttempts.get(ip);
+
+  if (state && state.lockedUntil && now < state.lockedUntil) {
+    const remainingMs = state.lockedUntil - now;
+    return { allowed: false, retryAfterMs: remainingMs };
+  }
+
+  return { allowed: true };
+}
+
+function recordAuthFailure(ip) {
+  const now = Date.now();
+  const state = rateLimitState.authAttempts.get(ip) || { attempts: 0, lastAttempt: 0 };
+
+  // Reset if outside window
+  if (now - state.lastAttempt > RATE_LIMIT_CONFIG.authWindowMs) {
+    state.attempts = 0;
+  }
+
+  state.attempts++;
+  state.lastAttempt = now;
+
+  if (state.attempts >= RATE_LIMIT_CONFIG.maxAuthAttempts) {
+    state.lockedUntil = now + RATE_LIMIT_CONFIG.authLockoutMs;
+    auditLog("AUTH_LOCKOUT", { ip, attempts: state.attempts });
+  }
+
+  rateLimitState.authAttempts.set(ip, state);
+}
+
+function recordAuthSuccess(ip) {
+  rateLimitState.authAttempts.delete(ip);
+}
+
+function checkRequestRateLimit(ip) {
+  const now = Date.now();
+  let state = rateLimitState.requestCounts.get(ip);
+
+  if (!state || now - state.windowStart > RATE_LIMIT_CONFIG.requestWindowMs) {
+    state = { requests: [], windowStart: now };
+  }
+
+  // Remove requests outside current window
+  state.requests = state.requests.filter(t => now - t < RATE_LIMIT_CONFIG.requestWindowMs);
+
+  if (state.requests.length >= RATE_LIMIT_CONFIG.maxRequestsPerMinute) {
+    return { allowed: false, retryAfterMs: RATE_LIMIT_CONFIG.requestWindowMs - (now - state.requests[0]) };
+  }
+
+  state.requests.push(now);
+  rateLimitState.requestCounts.set(ip, state);
+  return { allowed: true };
+}
+
+// === AUDIT LOGGING ===
+// Security event logging for forensics and monitoring
+function auditLog(event, details = {}) {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    event,
+    ...details,
+  };
+  // Log to stdout in JSON format for log aggregation
+  console.log(`[AUDIT] ${JSON.stringify(entry)}`);
+}
+
+// Cleanup stale rate limit entries periodically (every 5 minutes)
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, state] of rateLimitState.authAttempts) {
+    if (state.lockedUntil && now > state.lockedUntil + RATE_LIMIT_CONFIG.authWindowMs) {
+      rateLimitState.authAttempts.delete(ip);
+    }
+  }
+  for (const [ip, state] of rateLimitState.requestCounts) {
+    if (now - state.windowStart > RATE_LIMIT_CONFIG.requestWindowMs * 2) {
+      rateLimitState.requestCounts.delete(ip);
+    }
+  }
+}, 5 * 60 * 1000);
+
 app.use(express.json({ limit: "1mb" }));
 
 // Health endpoint for Railway (primary)
@@ -686,14 +835,66 @@ app.get("/setup/api/debug", requireSetupAuth, async (_req, res) => {
 
 // --- Debug console (Option A: allowlisted commands + config editor) ---
 
+// === SECRET REDACTION ===
+// Comprehensive patterns for detecting and redacting sensitive data
+// Based on common API key formats and credential patterns
+const SECRET_PATTERNS = [
+  // OpenAI API keys (sk-..., sk-proj-...)
+  /(sk-[A-Za-z0-9_-]{10,})/g,
+  /(sk-proj-[A-Za-z0-9_-]{10,})/g,
+  // Anthropic API keys
+  /(sk-ant-[A-Za-z0-9_-]{10,})/g,
+  // GitHub tokens (classic and fine-grained)
+  /(ghp_[A-Za-z0-9]{36,})/g,
+  /(gho_[A-Za-z0-9_]{10,})/g,
+  /(ghs_[A-Za-z0-9]{36,})/g,
+  /(ghu_[A-Za-z0-9]{36,})/g,
+  /(github_pat_[A-Za-z0-9_]{22,})/g,
+  // Slack tokens
+  /(xox[baprs]-[A-Za-z0-9-]{10,})/g,
+  /(xapp-[A-Za-z0-9-]{10,})/g,
+  // Telegram bot tokens
+  /(AA[A-Za-z0-9_-]{10,}:\S{10,})/g,
+  /(\d{8,12}:[A-Za-z0-9_-]{35,})/g,
+  // Discord tokens
+  /([A-Za-z0-9_-]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,})/g,
+  // AWS keys
+  /(AKIA[A-Z0-9]{16})/g,
+  /(ABIA[A-Z0-9]{16})/g,
+  /(ACCA[A-Z0-9]{16})/g,
+  // Google API keys
+  /(AIza[A-Za-z0-9_-]{35})/g,
+  // Azure keys
+  /([A-Za-z0-9+\/]{86}==)/g,
+  // Generic JWT tokens (eyJ...)
+  /(eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})/g,
+  // Generic API key patterns
+  /([Aa]pi[_-]?[Kk]ey["']?\s*[:=]\s*["']?)([A-Za-z0-9_-]{20,})/g,
+  /([Ss]ecret["']?\s*[:=]\s*["']?)([A-Za-z0-9_-]{20,})/g,
+  /([Tt]oken["']?\s*[:=]\s*["']?)([A-Za-z0-9_-]{20,})/g,
+  /([Pp]assword["']?\s*[:=]\s*["']?)([^\s"']{8,})/g,
+  // Private keys
+  /(-----BEGIN [A-Z ]+PRIVATE KEY-----)/g,
+  // Bearer tokens in headers
+  /(Bearer\s+[A-Za-z0-9_-]{20,})/gi,
+];
+
 function redactSecrets(text) {
   if (!text) return text;
-  // Very small best-effort redaction. (Config paths/values may still contain secrets.)
-  return String(text)
-    .replace(/(sk-[A-Za-z0-9_-]{10,})/g, "[REDACTED]")
-    .replace(/(gho_[A-Za-z0-9_]{10,})/g, "[REDACTED]")
-    .replace(/(xox[baprs]-[A-Za-z0-9-]{10,})/g, "[REDACTED]")
-    .replace(/(AA[A-Za-z0-9_-]{10,}:\S{10,})/g, "[REDACTED]");
+  let result = String(text);
+
+  // Apply all secret patterns
+  for (const pattern of SECRET_PATTERNS) {
+    result = result.replace(pattern, (match, ...groups) => {
+      // For patterns with capture groups for context (like api_key=XXX), preserve context
+      if (groups.length > 2 && typeof groups[0] === "string" && typeof groups[1] === "string") {
+        return groups[0] + "[REDACTED]";
+      }
+      return "[REDACTED]";
+    });
+  }
+
+  return result;
 }
 
 const ALLOWED_CONSOLE_COMMANDS = new Set([
@@ -715,10 +916,14 @@ app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
   const payload = req.body || {};
   const cmd = String(payload.cmd || "").trim();
   const arg = String(payload.arg || "").trim();
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
 
   if (!ALLOWED_CONSOLE_COMMANDS.has(cmd)) {
+    auditLog("CONSOLE_CMD_BLOCKED", { ip, cmd, reason: "not in allowlist" });
     return res.status(400).json({ ok: false, error: "Command not allowed" });
   }
+
+  auditLog("CONSOLE_CMD_EXECUTE", { ip, cmd, arg: arg || undefined });
 
   try {
     if (cmd === "gateway.restart") {
@@ -783,11 +988,16 @@ app.get("/setup/api/config/raw", requireSetupAuth, async (_req, res) => {
 });
 
 app.post("/setup/api/config/raw", requireSetupAuth, async (req, res) => {
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
+
   try {
     const content = String((req.body && req.body.content) || "");
     if (content.length > 500_000) {
+      auditLog("CONFIG_SAVE_BLOCKED", { ip, reason: "content too large", size: content.length });
       return res.status(413).json({ ok: false, error: "Config too large" });
     }
+
+    auditLog("CONFIG_SAVE", { ip, size: content.length });
 
     fs.mkdirSync(STATE_DIR, { recursive: true });
 
@@ -812,11 +1022,18 @@ app.post("/setup/api/config/raw", requireSetupAuth, async (req, res) => {
 });
 
 app.post("/setup/api/pairing/approve", requireSetupAuth, async (req, res) => {
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
   const { channel, code } = req.body || {};
   if (!channel || !code) {
     return res.status(400).json({ ok: false, error: "Missing channel or code" });
   }
+  auditLog("PAIRING_APPROVE", { ip, channel, code });
   const r = await runCmd(OPENCLAW_NODE, clawArgs(["pairing", "approve", String(channel), String(code)]));
+  if (r.code === 0) {
+    auditLog("PAIRING_APPROVED", { ip, channel, code });
+  } else {
+    auditLog("PAIRING_APPROVE_FAILED", { ip, channel, code });
+  }
   return res.status(r.code === 0 ? 200 : 500).json({ ok: r.code === 0, output: r.output });
 });
 
@@ -832,7 +1049,10 @@ app.get("/setup/api/pairing/pending", requireSetupAuth, async (_req, res) => {
 });
 
 // Approve all pending pairing requests (convenience endpoint)
-app.post("/setup/api/pairing/approve-all", requireSetupAuth, async (_req, res) => {
+app.post("/setup/api/pairing/approve-all", requireSetupAuth, async (req, res) => {
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
+  auditLog("PAIRING_APPROVE_ALL", { ip });
+
   const listResult = await runCmd(OPENCLAW_NODE, clawArgs(["pairing", "list", "--json"]));
   let pending = [];
   try {
@@ -854,18 +1074,26 @@ app.post("/setup/api/pairing/approve-all", requireSetupAuth, async (_req, res) =
   return res.json({ ok: true, approved: results.length, results });
 });
 
-app.post("/setup/api/reset", requireSetupAuth, async (_req, res) => {
+app.post("/setup/api/reset", requireSetupAuth, async (req, res) => {
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
+  auditLog("CONFIG_RESET", { ip });
+
   // Minimal reset: delete the config file so /setup can rerun.
   // Keep credentials/sessions/workspace by default.
   try {
     fs.rmSync(configPath(), { force: true });
+    auditLog("CONFIG_RESET_SUCCESS", { ip });
     res.type("text/plain").send("OK - deleted config file. You can rerun setup now.");
   } catch (err) {
+    auditLog("CONFIG_RESET_FAILED", { ip, error: String(err) });
     res.status(500).type("text/plain").send(String(err));
   }
 });
 
-app.get("/setup/export", requireSetupAuth, async (_req, res) => {
+app.get("/setup/export", requireSetupAuth, async (req, res) => {
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
+  auditLog("BACKUP_EXPORT", { ip });
+
   fs.mkdirSync(STATE_DIR, { recursive: true });
   fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
 
@@ -953,9 +1181,13 @@ async function readBodyBuffer(req, maxBytes) {
 // Import a backup created by /setup/export.
 // This is intentionally limited to restoring into /data to avoid overwriting arbitrary host paths.
 app.post("/setup/import", requireSetupAuth, async (req, res) => {
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
+  auditLog("BACKUP_IMPORT", { ip });
+
   try {
     const dataRoot = "/data";
     if (!isUnderDir(STATE_DIR, dataRoot) || !isUnderDir(WORKSPACE_DIR, dataRoot)) {
+      auditLog("BACKUP_IMPORT_BLOCKED", { ip, reason: "directories not under /data" });
       return res
         .status(400)
         .type("text/plain")
@@ -997,6 +1229,7 @@ app.post("/setup/import", requireSetupAuth, async (req, res) => {
       await restartGateway();
     }
 
+    auditLog("BACKUP_IMPORT_SUCCESS", { ip });
     res.type("text/plain").send("OK - imported backup into /data and restarted gateway.\n");
   } catch (err) {
     console.error("[import]", err);
