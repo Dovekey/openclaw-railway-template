@@ -20,10 +20,45 @@ const PORT = Number.parseInt(
 
 // State/workspace
 // OpenClaw defaults to ~/.openclaw. Keep CLAWDBOT_* as backward-compat aliases.
-const STATE_DIR =
-  process.env.OPENCLAW_STATE_DIR?.trim() ||
-  process.env.CLAWDBOT_STATE_DIR?.trim() ||
-  path.join(os.homedir(), ".openclaw");
+// If none of the default locations are writable, find any writable location.
+function findWritableStateDir() {
+  // If explicitly set via env, use it (don't second-guess the user)
+  const envDir = process.env.OPENCLAW_STATE_DIR?.trim() || process.env.CLAWDBOT_STATE_DIR?.trim();
+  if (envDir) return envDir;
+
+  // Try candidate directories in order of preference
+  const candidates = [
+    path.join(os.homedir(), ".openclaw"),
+    "/data/.openclaw",
+    path.join(os.tmpdir(), ".openclaw"),
+    path.join(process.cwd(), ".openclaw"),
+  ];
+
+  for (const dir of candidates) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      // Test write access
+      const testFile = path.join(dir, ".write-test");
+      fs.writeFileSync(testFile, "test", { mode: 0o600 });
+      fs.unlinkSync(testFile);
+      return dir;
+    } catch {
+      // This location isn't writable, try next
+    }
+  }
+
+  // Last resort: use tmpdir directly with a unique subdirectory
+  const fallback = path.join(os.tmpdir(), `openclaw-${process.pid}`);
+  try {
+    fs.mkdirSync(fallback, { recursive: true });
+    return fallback;
+  } catch {
+    // If even tmpdir fails, just return the first candidate and let it fail later with a clear error
+    return candidates[0];
+  }
+}
+
+const STATE_DIR = findWritableStateDir();
 
 const WORKSPACE_DIR =
   process.env.OPENCLAW_WORKSPACE_DIR?.trim() ||
