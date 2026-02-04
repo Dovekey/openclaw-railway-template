@@ -1010,4 +1010,63 @@
       );
     }, 500);
   }
+
+  // =========================================================================
+  // Copy Gateway Token
+  // =========================================================================
+  var copyTokenBtn = document.getElementById('copyTokenBtn');
+  if (copyTokenBtn) {
+    copyTokenBtn.onclick = function () {
+      // Fetch the token from the API
+      httpJson('/setup/api/gateway-token')
+        .then(function (j) {
+          if (j.ok && j.token) {
+            // Copy to clipboard
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(j.token).then(function () {
+                showCopySuccess();
+              }).catch(function () {
+                fallbackCopy(j.token);
+              });
+            } else {
+              fallbackCopy(j.token);
+            }
+          } else {
+            alert('Could not get token: ' + (j.error || 'Unknown error'));
+          }
+        })
+        .catch(function (e) {
+          alert('Error fetching token: ' + String(e));
+        });
+    };
+
+    function showCopySuccess() {
+      var originalText = copyTokenBtn.innerHTML;
+      copyTokenBtn.innerHTML = '✓ Copied!';
+      copyTokenBtn.classList.add('copied');
+      setTimeout(function () {
+        copyTokenBtn.innerHTML = originalText;
+        copyTokenBtn.classList.remove('copied');
+      }, 2000);
+    }
+
+    function fallbackCopy(text) {
+      // Fallback for older browsers
+      var textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      textArea.style.top = '-999999px';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        showCopySuccess();
+      } catch (err) {
+        alert('Failed to copy. Token: ' + text.slice(0, 20) + '...');
+      }
+      document.body.removeChild(textArea);
+    }
+  }
 })();

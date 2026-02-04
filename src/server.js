@@ -1000,6 +1000,111 @@ app.get("/setup/app.js", requireSetupAuth, (_req, res) => {
   res.send(fs.readFileSync(path.join(process.cwd(), "src", "setup-app.js"), "utf8"));
 });
 
+// Autologin endpoint - sets auth cookie and redirects to OpenClaw UI
+// This allows users to seamlessly access the full UI after dashboard login
+app.get("/setup/autologin", requireSetupAuth, (_req, res) => {
+  if (!isConfigured()) {
+    return res.redirect("/setup");
+  }
+
+  // Set the gateway auth token as a cookie for the browser
+  // The cookie is httpOnly: false so client JS can read it if needed
+  // secure: true in production (when not localhost)
+  const isLocalhost = _req.hostname === "localhost" || _req.hostname === "127.0.0.1";
+
+  // Set multiple cookie formats to maximize compatibility with different gateway versions
+  // openclaw-token: primary token cookie
+  res.cookie("openclaw-token", OPENCLAW_GATEWAY_TOKEN, {
+    httpOnly: false,
+    secure: !isLocalhost,
+    sameSite: "lax",
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    path: "/",
+  });
+
+  // gateway-token: alternative name
+  res.cookie("gateway-token", OPENCLAW_GATEWAY_TOKEN, {
+    httpOnly: false,
+    secure: !isLocalhost,
+    sameSite: "lax",
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    path: "/",
+  });
+
+  // Also set in localStorage-compatible format via a redirect page
+  // This ensures the token is available however the gateway expects it
+  res.type("html").send(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Logging in to OpenClaw...</title>
+  <style>
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+      background: #0a0a0a;
+      color: #f5f5f5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+    }
+    .loader {
+      text-align: center;
+    }
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #262626;
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 1rem;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .message {
+      color: #a3a3a3;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="loader">
+    <div class="spinner"></div>
+    <div class="message">Logging in to OpenClaw...</div>
+  </div>
+  <script>
+    // Store token in localStorage for gateway UI
+    try {
+      localStorage.setItem('openclaw-token', '${OPENCLAW_GATEWAY_TOKEN}');
+      localStorage.setItem('gateway-token', '${OPENCLAW_GATEWAY_TOKEN}');
+      localStorage.setItem('authToken', '${OPENCLAW_GATEWAY_TOKEN}');
+    } catch (e) {
+      console.warn('Could not set localStorage:', e);
+    }
+    // Redirect to OpenClaw UI with token as query param (fallback)
+    setTimeout(function() {
+      window.location.href = '/openclaw?token=' + encodeURIComponent('${OPENCLAW_GATEWAY_TOKEN}');
+    }, 500);
+  </script>
+</body>
+</html>`);
+});
+
+// API endpoint to get the gateway token (for programmatic access)
+app.get("/setup/api/gateway-token", requireSetupAuth, (_req, res) => {
+  if (!isConfigured()) {
+    return res.status(400).json({ ok: false, error: "Not configured" });
+  }
+  res.json({
+    ok: true,
+    token: OPENCLAW_GATEWAY_TOKEN,
+    usage: "Use this token to authenticate with the OpenClaw gateway",
+  });
+});
+
 // Helper to generate HTML for auth group options
 function renderAuthGroupOptions(selectedGroup) {
   return AUTH_GROUPS.map(g => {
@@ -1581,6 +1686,45 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
       border-color: var(--accent-purple);
       background: linear-gradient(135deg, var(--bg-card) 0%, rgba(139, 92, 246, 0.05) 100%);
     }
+
+    /* Autologin button styles */
+    .btn-autologin:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 25px rgba(59, 130, 246, 0.3);
+      text-decoration: none !important;
+    }
+
+    .btn-autologin:active {
+      transform: translateY(0);
+    }
+
+    .autologin-section {
+      position: relative;
+    }
+
+    /* Token copy button */
+    .token-copy-btn {
+      padding: 0.4rem 0.75rem;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .token-copy-btn:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--accent-blue);
+      color: var(--text-primary);
+    }
+
+    .token-copy-btn.copied {
+      background: var(--accent-green);
+      border-color: var(--accent-green);
+      color: white;
+    }
   </style>
 </head>
 <body>
@@ -1598,8 +1742,22 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
       <div class="card card-status">
         <h2><span class="icon">📊</span> Status</h2>
         <div class="status-bar" id="status">Loading...</div>
+
+        <!-- Prominent Autologin Button -->
+        <div class="autologin-section" style="margin: 1rem 0; padding: 1rem; background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%); border-radius: var(--radius-md); border: 1px solid var(--accent-blue);">
+          <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+            <a href="/setup/autologin" class="btn-autologin" style="display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.5rem; background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple)); color: white; border-radius: var(--radius-sm); font-weight: 600; font-size: 1rem; text-decoration: none; transition: transform 0.1s, box-shadow 0.2s;">
+              <span style="font-size: 1.2rem;">🚀</span> Open OpenClaw UI
+            </a>
+            <button id="copyTokenBtn" class="token-copy-btn" title="Copy gateway token for manual login">
+              📋 Copy Token
+            </button>
+            <span style="color: var(--text-muted); font-size: 0.85rem;">Auto-login enabled</span>
+          </div>
+        </div>
+
         <div class="link-group">
-          <a href="/openclaw" target="_blank">Open OpenClaw UI</a>
+          <a href="/openclaw" target="_blank">Direct UI (manual login)</a>
           <a href="/setup/export" target="_blank">Download Backup</a>
         </div>
         <div class="import-section">
