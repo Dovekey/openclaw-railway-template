@@ -21,10 +21,40 @@ const PORT = Number.parseInt(
 // State/workspace
 // OpenClaw defaults to ~/.openclaw. Keep CLAWDBOT_* as backward-compat aliases.
 // If none of the default locations are writable, find any writable location.
+
+// Expand shell variables like $HOME and ~ in paths
+// (Railway passes env vars as literal strings without shell expansion)
+function expandShellPath(p) {
+  if (!p) return p;
+  // Expand ~ at start of path
+  if (p.startsWith("~/")) {
+    p = path.join(os.homedir(), p.slice(2));
+  } else if (p === "~") {
+    p = os.homedir();
+  }
+  // Expand $HOME anywhere in path
+  p = p.replace(/\$HOME\b/g, os.homedir());
+  p = p.replace(/\$\{HOME\}/g, os.homedir());
+  return p;
+}
+
 function findWritableStateDir() {
-  // If explicitly set via env, use it (don't second-guess the user)
-  const envDir = process.env.OPENCLAW_STATE_DIR?.trim() || process.env.CLAWDBOT_STATE_DIR?.trim();
-  if (envDir) return envDir;
+  // If explicitly set via env, expand shell variables and validate
+  const rawEnvDir = process.env.OPENCLAW_STATE_DIR?.trim() || process.env.CLAWDBOT_STATE_DIR?.trim();
+  if (rawEnvDir) {
+    const envDir = expandShellPath(rawEnvDir);
+    // Validate the expanded path is usable before returning
+    try {
+      fs.mkdirSync(envDir, { recursive: true });
+      const testFile = path.join(envDir, ".write-test");
+      fs.writeFileSync(testFile, "test", { mode: 0o600 });
+      fs.unlinkSync(testFile);
+      return envDir;
+    } catch {
+      // Env-specified path not usable, fall through to auto-discovery
+      console.warn(`[wrapper] Configured state dir "${rawEnvDir}" (expanded: "${envDir}") is not writable, auto-discovering...`);
+    }
+  }
 
   // Try candidate directories in order of preference
   // /data is the Railway volume mount - prioritize it for persistent storage
@@ -61,10 +91,10 @@ function findWritableStateDir() {
 
 const STATE_DIR = findWritableStateDir();
 
-const WORKSPACE_DIR =
+const WORKSPACE_DIR = expandShellPath(
   process.env.OPENCLAW_WORKSPACE_DIR?.trim() ||
-  process.env.CLAWDBOT_WORKSPACE_DIR?.trim() ||
-  path.join(STATE_DIR, "workspace");
+  process.env.CLAWDBOT_WORKSPACE_DIR?.trim()
+) || path.join(STATE_DIR, "workspace");
 
 // Protect /setup with a user-provided password.
 const SETUP_PASSWORD = process.env.SETUP_PASSWORD?.trim();
