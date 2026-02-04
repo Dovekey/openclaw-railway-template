@@ -330,6 +330,104 @@ if (!DATA_PERSISTENCE.persistent) {
   console.warn(`[wrapper] ${DATA_PERSISTENCE.warning}`);
 }
 
+// Create symlinks between /data and ~/ for convenience
+function setupDataHomeSymlinks() {
+  const homeDir = os.homedir();
+  const dataDir = "/data";
+
+  console.log("[wrapper] Setting up symlinks between /data and ~/...");
+
+  // Only proceed if /data exists and is a directory
+  if (!fs.existsSync(dataDir)) {
+    console.log("[wrapper] /data does not exist, skipping symlink setup");
+    return { ok: false, reason: "/data does not exist" };
+  }
+
+  try {
+    const dataStats = fs.statSync(dataDir);
+    if (!dataStats.isDirectory()) {
+      console.log("[wrapper] /data is not a directory, skipping symlink setup");
+      return { ok: false, reason: "/data is not a directory" };
+    }
+  } catch (err) {
+    console.warn(`[wrapper] Cannot stat /data: ${err.message}`);
+    return { ok: false, reason: err.message };
+  }
+
+  const results = { homeToData: null, dataToHome: null };
+
+  // Create ~/data -> /data symlink (access /data from home)
+  const homeDataLink = path.join(homeDir, "data");
+  try {
+    // Check if symlink already exists and points to the right place
+    if (fs.existsSync(homeDataLink)) {
+      const linkStats = fs.lstatSync(homeDataLink);
+      if (linkStats.isSymbolicLink()) {
+        const target = fs.readlinkSync(homeDataLink);
+        if (target === dataDir) {
+          console.log(`[wrapper] ✓ ~/data -> /data symlink already exists`);
+          results.homeToData = "exists";
+        } else {
+          // Remove incorrect symlink and recreate
+          fs.unlinkSync(homeDataLink);
+          fs.symlinkSync(dataDir, homeDataLink);
+          console.log(`[wrapper] ✓ Updated ~/data -> /data symlink`);
+          results.homeToData = "updated";
+        }
+      } else {
+        console.log(`[wrapper] ~/data exists but is not a symlink, skipping`);
+        results.homeToData = "skipped (not a symlink)";
+      }
+    } else {
+      // Create new symlink
+      fs.symlinkSync(dataDir, homeDataLink);
+      console.log(`[wrapper] ✓ Created ~/data -> /data symlink`);
+      results.homeToData = "created";
+    }
+  } catch (err) {
+    console.warn(`[wrapper] Failed to create ~/data symlink: ${err.message}`);
+    results.homeToData = `error: ${err.message}`;
+  }
+
+  // Create /data/home -> ~/ symlink (access home from /data)
+  const dataHomeLink = path.join(dataDir, "home");
+  try {
+    if (fs.existsSync(dataHomeLink)) {
+      const linkStats = fs.lstatSync(dataHomeLink);
+      if (linkStats.isSymbolicLink()) {
+        const target = fs.readlinkSync(dataHomeLink);
+        if (target === homeDir) {
+          console.log(`[wrapper] ✓ /data/home -> ~/ symlink already exists`);
+          results.dataToHome = "exists";
+        } else {
+          fs.unlinkSync(dataHomeLink);
+          fs.symlinkSync(homeDir, dataHomeLink);
+          console.log(`[wrapper] ✓ Updated /data/home -> ~/ symlink`);
+          results.dataToHome = "updated";
+        }
+      } else {
+        console.log(`[wrapper] /data/home exists but is not a symlink, skipping`);
+        results.dataToHome = "skipped (not a symlink)";
+      }
+    } else {
+      fs.symlinkSync(homeDir, dataHomeLink);
+      console.log(`[wrapper] ✓ Created /data/home -> ~/ symlink`);
+      results.dataToHome = "created";
+    }
+  } catch (err) {
+    console.warn(`[wrapper] Failed to create /data/home symlink: ${err.message}`);
+    results.dataToHome = `error: ${err.message}`;
+  }
+
+  return { ok: true, results };
+}
+
+// Set up symlinks at startup
+const SYMLINK_SETUP = setupDataHomeSymlinks();
+if (SYMLINK_SETUP.ok) {
+  console.log("[wrapper] Symlink setup complete:", JSON.stringify(SYMLINK_SETUP.results));
+}
+
 // Protect /setup with a user-provided password.
 const SETUP_PASSWORD = process.env.SETUP_PASSWORD?.trim();
 
@@ -1017,18 +1115,40 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
       font-size: 0.95rem;
     }
 
-    /* Bento Grid Layout */
+    /* Split Layout - Bento Left, Chat Right */
+    .split-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      min-height: calc(100vh - 140px);
+    }
+
+    .bento-panel {
+      overflow-y: auto;
+      max-height: calc(100vh - 140px);
+      padding-right: 0.5rem;
+    }
+
+    .chat-panel {
+      display: flex;
+      flex-direction: column;
+      height: calc(100vh - 140px);
+      position: sticky;
+      top: 1rem;
+    }
+
+    /* Bento Grid Layout - Compact */
     .bento-grid {
       display: grid;
-      grid-template-columns: repeat(12, 1fr);
-      gap: 1rem;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 0.75rem;
     }
 
     .card {
       background: var(--bg-card);
       border: 1px solid var(--border-color);
       border-radius: var(--radius-lg);
-      padding: 1.25rem;
+      padding: 1rem;
       transition: border-color 0.2s, background 0.2s;
     }
 
@@ -1037,54 +1157,71 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
     }
 
     .card h2 {
-      font-size: 1rem;
+      font-size: 0.9rem;
       font-weight: 600;
-      margin: 0 0 0.75rem 0;
+      margin: 0 0 0.5rem 0;
       color: var(--text-primary);
       display: flex;
       align-items: center;
-      gap: 0.5rem;
+      gap: 0.4rem;
     }
 
     .card h2 .icon {
-      font-size: 1.1rem;
+      font-size: 1rem;
     }
 
     .card p.desc {
       color: var(--text-muted);
-      font-size: 0.85rem;
-      margin: 0 0 1rem 0;
-      line-height: 1.5;
+      font-size: 0.8rem;
+      margin: 0 0 0.75rem 0;
+      line-height: 1.4;
     }
 
-    /* Card sizes */
-    .card-status { grid-column: span 8; }
-    .card-health { grid-column: span 4; }
-    .card-troubleshooter { grid-column: span 6; }
-    .card-console { grid-column: span 6; }
-    .card-config { grid-column: span 6; }
-    .card-auth { grid-column: span 4; }
-    .card-channels { grid-column: span 4; }
-    .card-onboarding { grid-column: span 4; }
-    .card-chat { grid-column: span 12; }
+    /* Card sizes - Compact Bento */
+    .card-status { grid-column: span 4; }
+    .card-health { grid-column: span 2; }
+    .card-troubleshooter { grid-column: span 3; }
+    .card-console { grid-column: span 3; }
+    .card-config { grid-column: span 3; }
+    .card-auth { grid-column: span 3; }
+    .card-channels { grid-column: span 3; }
+    .card-onboarding { grid-column: span 3; }
 
+    /* Mobile: Stack vertically */
     @media (max-width: 1024px) {
+      .split-layout {
+        grid-template-columns: 1fr;
+        min-height: auto;
+      }
+      .bento-panel {
+        max-height: none;
+        overflow-y: visible;
+        padding-right: 0;
+      }
+      .chat-panel {
+        height: 500px;
+        position: relative;
+        top: 0;
+      }
+      .bento-grid {
+        grid-template-columns: repeat(6, 1fr);
+      }
       .card-status, .card-health, .card-troubleshooter, .card-console, .card-config,
-      .card-auth, .card-channels, .card-onboarding, .card-chat {
-        grid-column: span 12;
+      .card-auth, .card-channels, .card-onboarding {
+        grid-column: span 6;
       }
     }
 
-    @media (min-width: 1025px) and (max-width: 1280px) {
-      .card-status { grid-column: span 7; }
-      .card-health { grid-column: span 5; }
-      .card-troubleshooter { grid-column: span 6; }
-      .card-console { grid-column: span 6; }
-      .card-config { grid-column: span 6; }
-      .card-auth { grid-column: span 4; }
-      .card-channels { grid-column: span 4; }
-      .card-onboarding { grid-column: span 4; }
-      .card-chat { grid-column: span 12; }
+    /* Medium screens */
+    @media (min-width: 1025px) and (max-width: 1400px) {
+      .card-status { grid-column: span 4; }
+      .card-health { grid-column: span 2; }
+      .card-troubleshooter { grid-column: span 3; }
+      .card-console { grid-column: span 3; }
+      .card-config { grid-column: span 3; }
+      .card-auth { grid-column: span 3; }
+      .card-channels { grid-column: span 3; }
+      .card-onboarding { grid-column: span 3; }
     }
 
     /* Troubleshooter status box */
@@ -1103,11 +1240,23 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
     .chat-container {
       display: flex;
       flex-direction: column;
-      height: 400px;
+      flex: 1;
+      min-height: 400px;
       border: 1px solid var(--border-color);
-      border-radius: var(--radius-sm);
+      border-radius: var(--radius-lg);
       background: var(--bg-secondary);
       overflow: hidden;
+    }
+
+    .chat-panel .card-chat {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      height: 100%;
+    }
+
+    .chat-panel .card-chat .chat-container {
+      flex: 1;
     }
 
     .chat-messages {
@@ -1441,8 +1590,11 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
       <p>Configure OpenClaw by running the same onboarding command it uses in the terminal, but from the browser.</p>
     </div>
 
-    <div class="bento-grid">
-      <!-- Status Card -->
+    <div class="split-layout">
+      <!-- Left Panel: Bento Grid -->
+      <div class="bento-panel">
+        <div class="bento-grid">
+          <!-- Status Card -->
       <div class="card card-status">
         <h2><span class="icon">📊</span> Status</h2>
         <div class="status-bar" id="status">Loading...</div>
@@ -1645,24 +1797,28 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
 
         <pre id="log"></pre>
       </div>
+        </div>
+      </div>
 
-      <!-- Direct Chat Card -->
-      <div class="card card-chat">
-        <h2><span class="icon">💬</span> Direct Chat</h2>
-        <p class="desc">Chat directly with OpenClaw. Messages are sent via the agent command.</p>
-        <div class="chat-container">
-          <div class="chat-messages" id="chatMessages">
-            <div class="chat-message system">Type a message below to start chatting with OpenClaw.</div>
-          </div>
-          <div id="chatTyping" class="chat-typing" style="display: none;">
-            <div class="chat-typing-dots">
-              <span></span><span></span><span></span>
+      <!-- Right Panel: Chat -->
+      <div class="chat-panel">
+        <div class="card card-chat">
+          <h2><span class="icon">💬</span> Direct Chat</h2>
+          <p class="desc">Chat directly with OpenClaw. Messages are sent via the agent command.</p>
+          <div class="chat-container">
+            <div class="chat-messages" id="chatMessages">
+              <div class="chat-message system">Type a message below to start chatting with OpenClaw.</div>
             </div>
-            <span>OpenClaw is thinking...</span>
-          </div>
-          <div class="chat-input-row">
-            <input type="text" id="chatInput" placeholder="Type your message..." />
-            <button id="chatSend" class="btn-primary">Send</button>
+            <div id="chatTyping" class="chat-typing" style="display: none;">
+              <div class="chat-typing-dots">
+                <span></span><span></span><span></span>
+              </div>
+              <span>OpenClaw is thinking...</span>
+            </div>
+            <div class="chat-input-row">
+              <input type="text" id="chatInput" placeholder="Type your message..." />
+              <button id="chatSend" class="btn-primary">Send</button>
+            </div>
           </div>
         </div>
       </div>
@@ -2042,6 +2198,75 @@ function redactSecrets(text) {
   }
 
   return result;
+}
+
+// Embedded response generator for when the gateway agent is unavailable
+function generateEmbeddedResponse(message) {
+  const lowerMsg = message.toLowerCase();
+
+  // Help and status queries
+  if (lowerMsg.includes("help") || lowerMsg.includes("what can you do")) {
+    return `I'm OpenClaw's embedded assistant. Here's what I can help with:
+
+**Quick Commands** (type in chat):
+- \`/health\` - Run health check
+- \`/troubleshoot\` - Diagnose issues
+- \`/status\` - Check system status
+- \`/restart\` - Restart the gateway
+- \`/logs\` - View recent logs
+
+**Setup Help**:
+- Use the **Auth Provider** card to configure your AI provider
+- Click **Run Setup** to complete configuration
+- Use **Health Check** to diagnose and fix issues
+
+Type \`/help\` for all available commands!`;
+  }
+
+  if (lowerMsg.includes("status") || lowerMsg.includes("how are you")) {
+    return `OpenClaw is running but the main agent isn't responding. Try:
+1. Run \`/health\` to check system health
+2. Run \`/troubleshoot\` for diagnostics
+3. Use the **Fix All** button to repair issues
+4. Check if your auth provider is configured correctly`;
+  }
+
+  if (lowerMsg.includes("error") || lowerMsg.includes("problem") || lowerMsg.includes("not working")) {
+    return `Let me help you troubleshoot! Try these steps:
+
+1. **Run diagnostics**: Type \`/troubleshoot\` or click "Standard" in Troubleshooter
+2. **Check health**: Type \`/health\` or click "Check" in Health Check
+3. **Auto-fix issues**: Click "Fix All" in Health Check
+4. **Restart gateway**: Type \`/restart\` or use Command Console
+
+If issues persist, check:
+- Auth provider configuration
+- API key/token validity
+- Network connectivity`;
+  }
+
+  if (lowerMsg.includes("setup") || lowerMsg.includes("configure") || lowerMsg.includes("start")) {
+    return `To set up OpenClaw:
+
+1. **Select Provider**: Choose your AI provider (Anthropic, OpenAI, etc.)
+2. **Enter API Key**: Paste your API key or token
+3. **Run Setup**: Click the "Run Setup" button
+4. **Verify**: Check that status shows "Configured"
+
+Optional: Configure Telegram, Discord, or Slack for messaging.`;
+  }
+
+  // Default response
+  return `I'm OpenClaw's embedded assistant (the main agent isn't responding right now).
+
+**Quick Actions**:
+- Type \`/help\` for available commands
+- Type \`/troubleshoot\` to diagnose issues
+- Type \`/health\` to check system status
+
+**Your message**: "${message.slice(0, 100)}${message.length > 100 ? '...' : ''}"
+
+I can help with setup, configuration, and troubleshooting. For full AI chat, please ensure the gateway is running and configured correctly.`;
 }
 
 const ALLOWED_CONSOLE_COMMANDS = new Set([
@@ -2777,10 +3002,10 @@ app.post("/setup/api/chat", requireSetupAuth, async (req, res) => {
     }
 
     // Run the agent command with the message
-    // Note: openclaw agent doesn't support --no-stream, so we just capture the output
+    // Use --agent main to specify the default agent, avoiding session selection errors
     const result = await runCmd(
       OPENCLAW_NODE,
-      clawArgs(["agent", "--message", sanitizedMessage]),
+      clawArgs(["agent", "--agent", "main", "--message", sanitizedMessage]),
       { timeoutMs: 120000 } // 2 minute timeout for AI responses
     );
 
@@ -2788,19 +3013,40 @@ app.post("/setup/api/chat", requireSetupAuth, async (req, res) => {
       // Check for specific errors
       const output = result.output || "";
 
+      // Handle session/agent selection errors - fall back to embedded response
+      if (output.includes("--to") || output.includes("--session-id") || output.includes("--agent to choose")) {
+        logger.warn("Gateway agent failed, using embedded fallback", { output: output.slice(0, 200) });
+        return res.json({
+          ok: true,
+          response: generateEmbeddedResponse(sanitizedMessage),
+          timestamp: new Date().toISOString(),
+          fallback: true,
+        });
+      }
+
       // Handle unknown option errors gracefully
       if (output.includes("unknown option")) {
         logger.warn("CLI compatibility issue", { output: output.slice(0, 200) });
+        // Try fallback for unknown option errors too
+        return res.json({
+          ok: true,
+          response: generateEmbeddedResponse(sanitizedMessage),
+          timestamp: new Date().toISOString(),
+          fallback: true,
+        });
       }
 
       logger.error("Chat command failed", {
         code: result.code,
         output: output.slice(0, 500),
       });
-      return res.status(500).json({
-        ok: false,
-        error: "Failed to get response from OpenClaw",
-        details: output.slice(0, 200),
+
+      // Final fallback for any error
+      return res.json({
+        ok: true,
+        response: generateEmbeddedResponse(sanitizedMessage),
+        timestamp: new Date().toISOString(),
+        fallback: true,
       });
     }
 
