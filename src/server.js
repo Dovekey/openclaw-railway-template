@@ -685,6 +685,21 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
     </div>
   </div>
 
+  <div class="card" style="border: 2px solid #374151;">
+    <h2>🩺 Health Check</h2>
+    <p class="muted">Check system health and automatically fix common issues like missing directories and permissions.</p>
+
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:1rem">
+      <button id="healthCheck" style="background:#1e40af; flex:1">Run Health Check</button>
+      <button id="fixAllIssues" style="background:#065f46; flex:1">Fix All Issues</button>
+    </div>
+    <div id="healthStatus" style="padding:0.75rem; background:#1f2937; border-radius:0.375rem; margin-bottom:0.5rem; display:none">
+      <div id="healthStatusText" style="font-weight:500"></div>
+      <div id="healthProgress" class="muted" style="font-size:0.9em; margin-top:0.25rem"></div>
+    </div>
+    <pre id="healthOut" style="white-space:pre-wrap; max-height:300px; overflow-y:auto"></pre>
+  </div>
+
   <div class="card">
     <h2>Debug console</h2>
     <p class="muted">Run a small allowlist of safe commands (no shell). Useful for debugging and recovery.</p>
@@ -1332,6 +1347,129 @@ app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
   } catch (err) {
     return res.status(500).json({ ok: false, error: String(err) });
   }
+});
+
+// Health check endpoint - runs doctor and returns structured results
+app.get("/setup/api/health", requireSetupAuth, async (_req, res) => {
+  try {
+    const r = await runCmd(OPENCLAW_NODE, clawArgs(["doctor"]));
+    const output = redactSecrets(r.output);
+
+    // Parse output to extract issues
+    const issues = [];
+    const lines = output.split("\n");
+    for (const line of lines) {
+      if (line.includes("CRITICAL") || line.includes("permission") || line.includes("missing") || line.includes("Error")) {
+        issues.push(line.trim());
+      }
+    }
+
+    res.json({
+      ok: r.code === 0,
+      healthy: r.code === 0 && issues.length === 0,
+      issues,
+      output,
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+// Fix all issues endpoint - runs all fixes in sequence
+app.post("/setup/api/health/fix-all", requireSetupAuth, async (req, res) => {
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
+  auditLog("HEALTH_FIX_ALL", { ip });
+
+  const steps = [];
+  let output = "╔══════════════════════════════════════════════════════════════╗\n";
+  output += "║           🔧 AUTOMATIC ISSUE REPAIR IN PROGRESS 🔧           ║\n";
+  output += "╚══════════════════════════════════════════════════════════════╝\n\n";
+
+  // Step 1: Create missing directories
+  output += "━━━ Step 1/4: Creating missing directories ━━━\n";
+  const dirsToCreate = [
+    path.join(STATE_DIR, "credentials"),
+    path.join(STATE_DIR, "identity"),
+    path.join(STATE_DIR, "logs"),
+    path.join(STATE_DIR, "sessions"),
+    WORKSPACE_DIR,
+  ];
+  let dirSuccess = true;
+  for (const dir of dirsToCreate) {
+    try {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      output += `  ✓ ${dir}\n`;
+    } catch (err) {
+      output += `  ✗ ${dir}: ${err.message}\n`;
+      dirSuccess = false;
+    }
+  }
+  steps.push({ name: "Create directories", ok: dirSuccess });
+  output += "\n";
+
+  // Step 2: Fix permissions
+  output += "━━━ Step 2/4: Fixing directory permissions ━━━\n";
+  let permSuccess = true;
+  const dirsToFix = [STATE_DIR, WORKSPACE_DIR, ...dirsToCreate.filter((d) => d !== WORKSPACE_DIR)];
+  for (const dir of dirsToFix) {
+    try {
+      if (fs.existsSync(dir)) {
+        fs.chmodSync(dir, 0o700);
+        output += `  ✓ chmod 700 ${dir}\n`;
+      }
+    } catch (err) {
+      output += `  ✗ ${dir}: ${err.message}\n`;
+      permSuccess = false;
+    }
+  }
+  steps.push({ name: "Fix permissions", ok: permSuccess });
+  output += "\n";
+
+  // Step 3: Run openclaw doctor --fix
+  output += "━━━ Step 3/4: Running openclaw doctor --fix ━━━\n";
+  const doctorResult = await runCmd(OPENCLAW_NODE, clawArgs(["doctor", "--fix"]));
+  const doctorOk = doctorResult.code === 0;
+  output += redactSecrets(doctorResult.output) + "\n";
+  steps.push({ name: "OpenClaw doctor --fix", ok: doctorOk });
+
+  // Step 4: Restart gateway
+  output += "━━━ Step 4/4: Restarting gateway ━━━\n";
+  try {
+    await restartGateway();
+    output += "  ✓ Gateway restarted successfully\n";
+    steps.push({ name: "Restart gateway", ok: true });
+  } catch (err) {
+    output += `  ✗ Gateway restart failed: ${err.message}\n`;
+    steps.push({ name: "Restart gateway", ok: false });
+  }
+  output += "\n";
+
+  // Final health check
+  output += "━━━ Final Health Check ━━━\n";
+  const finalCheck = await runCmd(OPENCLAW_NODE, clawArgs(["doctor"]));
+  const finalHealthy = finalCheck.code === 0;
+  output += redactSecrets(finalCheck.output) + "\n";
+
+  // Summary
+  const allOk = steps.every((s) => s.ok);
+  output += "╔══════════════════════════════════════════════════════════════╗\n";
+  output += allOk
+    ? "║                    ✅ ALL REPAIRS COMPLETE                    ║\n"
+    : "║              ⚠️  SOME REPAIRS MAY HAVE FAILED                 ║\n";
+  output += "╚══════════════════════════════════════════════════════════════╝\n";
+  output += "\nSummary:\n";
+  for (const step of steps) {
+    output += `  ${step.ok ? "✓" : "✗"} ${step.name}\n`;
+  }
+
+  auditLog("HEALTH_FIX_ALL_COMPLETE", { ip, allOk, finalHealthy, steps });
+
+  res.json({
+    ok: allOk,
+    healthy: finalHealthy,
+    steps,
+    output,
+  });
 });
 
 app.get("/setup/api/config/raw", requireSetupAuth, async (_req, res) => {
