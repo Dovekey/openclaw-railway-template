@@ -1,0 +1,110 @@
+{
+  "$schema": "https://developers.cloudflare.com/logs/schema.json",
+  "description": "OpenClaw Cloudflare logging configuration",
+  "documentation": "https://developers.cloudflare.com/logs/logpush/",
+
+  "logpush": {
+    "note": "Configure these in Cloudflare Dashboard > Analytics & Logs > Logpush",
+    "recommended_datasets": [
+      {
+        "dataset": "http_requests",
+        "description": "All HTTP requests to your domain",
+        "fields": [
+          "ClientIP",
+          "ClientRequestHost",
+          "ClientRequestMethod",
+          "ClientRequestPath",
+          "ClientRequestURI",
+          "EdgeResponseStatus",
+          "EdgeStartTimestamp",
+          "EdgeEndTimestamp",
+          "OriginResponseStatus",
+          "RayID",
+          "ClientCountry",
+          "ClientDeviceType",
+          "EdgeColoCode",
+          "CacheStatus",
+          "SecurityLevel"
+        ]
+      },
+      {
+        "dataset": "firewall_events",
+        "description": "WAF and firewall events",
+        "fields": [
+          "RayID",
+          "Action",
+          "Source",
+          "RuleID",
+          "ClientIP",
+          "ClientCountry",
+          "Datetime"
+        ]
+      },
+      {
+        "dataset": "spectrum_events",
+        "description": "Spectrum TCP/UDP events (if using Spectrum)",
+        "fields": ["Timestamp", "Event", "OriginIP", "ClientIP"]
+      }
+    ],
+    "destinations": [
+      {
+        "name": "R2",
+        "description": "Cloudflare R2 bucket (cheapest, integrates well)",
+        "setup": "Create R2 bucket, grant Logpush access"
+      },
+      {
+        "name": "HTTP Endpoint",
+        "description": "Send logs to a custom HTTP endpoint",
+        "setup": "Provide HTTPS endpoint URL with auth headers"
+      },
+      {
+        "name": "Datadog",
+        "description": "Direct integration with Datadog",
+        "setup": "Provide Datadog API key"
+      },
+      {
+        "name": "Splunk",
+        "description": "Direct integration with Splunk",
+        "setup": "Provide Splunk HEC token and endpoint"
+      }
+    ]
+  },
+
+  "analytics_engine": {
+    "note": "Configure in Cloudflare Dashboard > Analytics & Logs > Analytics Engine",
+    "description": "Serverless time-series analytics",
+    "use_cases": [
+      "Custom metrics tracking",
+      "Real-time dashboards",
+      "Anomaly detection"
+    ],
+    "sql_endpoint": "https://api.cloudflare.com/client/v4/accounts/{account_id}/analytics_engine/sql"
+  },
+
+  "workers_logging": {
+    "note": "Use a Cloudflare Worker as a logging proxy",
+    "description": "Intercept and enhance logs before they reach your origin"
+  },
+
+  "log_format": {
+    "description": "OpenClaw logs are emitted in this format for easy parsing",
+    "example": {
+      "timestamp": "2024-01-15T10:30:00.000Z",
+      "level": "info",
+      "message": "Request completed",
+      "service": "openclaw",
+      "trace": {
+        "traceId": "abc123",
+        "spanId": "def456"
+      },
+      "railway": {
+        "deploymentId": "xyz789",
+        "environment": "production"
+      },
+      "method": "GET",
+      "path": "/health",
+      "statusCode": 200,
+      "durationMs": 5.23
+    }
+  }
+}

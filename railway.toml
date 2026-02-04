@@ -12,5 +12,11 @@ restartPolicyMaxRetries = 5
 PORT = "8080"
 NODE_ENV = "production"
 OPENCLAW_DISABLE_BONJOUR = "true"
+
+# Observability Configuration
+# LOG_LEVEL: error, warn, info, http, debug, trace
 LOG_LEVEL = "info"
+# LOG_FORMAT: json (for log aggregation) or pretty (for development)
 LOG_FORMAT = "json"
+# SERVICE_NAME: Used in log entries for filtering
+SERVICE_NAME = "openclaw"

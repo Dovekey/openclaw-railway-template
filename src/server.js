@@ -8,6 +8,23 @@ import express from "express";
 import httpProxy from "http-proxy";
 import * as tar from "tar";
 
+// Observability module for structured logging, tracing, and metrics
+import {
+  logger,
+  requestTracer,
+  trackError,
+  trackGatewayStart,
+  trackGatewayRestart,
+  trackGatewayCrash,
+  getHealthStatus,
+  getMetricsJson,
+  getMetricsPrometheus,
+  generateDiagnosticReport,
+  metricsRouter,
+  logStartupBanner,
+  cloudflareContext,
+} from "./observability.js";
+
 // Railway deployments sometimes inject PORT=3000 by default. We want the wrapper to
 // reliably listen on 8080 unless explicitly overridden.
 //
@@ -357,13 +374,21 @@ async function startGateway() {
     },
   });
 
+  // Track gateway start
+  trackGatewayStart();
+
   gatewayProc.on("error", (err) => {
-    console.error(`[gateway] spawn error: ${String(err)}`);
+    logger.error("Gateway spawn error", { error: err.message, code: err.code });
+    trackError(err, { context: "gateway_spawn" });
     gatewayProc = null;
   });
 
   gatewayProc.on("exit", (code, signal) => {
-    console.error(`[gateway] exited code=${code} signal=${signal}`);
+    // Track as crash if exit was unexpected (non-zero code or signal)
+    if (code !== 0 || signal) {
+      trackGatewayCrash(code, signal);
+    }
+    logger.warn("Gateway exited", { exitCode: code, signal });
     gatewayProc = null;
   });
 }
@@ -396,6 +421,7 @@ async function restartGateway() {
     // Give it a moment to exit and release the port.
     await sleep(750);
     gatewayProc = null;
+    trackGatewayRestart();
   }
   return ensureGatewayRunning();
 }
@@ -577,6 +603,10 @@ setInterval(() => {
 
 app.use(express.json({ limit: "1mb" }));
 
+// === REQUEST TRACING MIDDLEWARE ===
+// Add tracing context and Cloudflare integration for all requests
+app.use(requestTracer());
+
 // Health endpoint for Railway (primary)
 app.get("/health", (_req, res) => {
   const status = {
@@ -586,6 +616,33 @@ app.get("/health", (_req, res) => {
     timestamp: new Date().toISOString()
   };
   res.json(status);
+});
+
+// === OBSERVABILITY ENDPOINTS ===
+// Detailed health with system metrics
+app.get("/health/detailed", (_req, res) => {
+  res.json(getHealthStatus(isConfigured(), gatewayProc));
+});
+
+// JSON metrics for dashboards
+app.get("/metrics", (_req, res) => {
+  res.json(getMetricsJson());
+});
+
+// Prometheus-compatible metrics
+app.get("/metrics/prometheus", (_req, res) => {
+  res.type("text/plain").send(getMetricsPrometheus());
+});
+
+// Full diagnostic report
+app.get("/diagnostics", async (_req, res) => {
+  const report = await generateDiagnosticReport({
+    isConfigured: isConfigured(),
+    gatewayProc,
+    stateDir: STATE_DIR,
+    workspaceDir: WORKSPACE_DIR,
+  });
+  res.json(report);
 });
 
 // Legacy health endpoint for backward compatibility
@@ -760,10 +817,11 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
     .card-auth { grid-column: span 4; }
     .card-channels { grid-column: span 4; }
     .card-onboarding { grid-column: span 4; }
+    .card-chat { grid-column: span 12; }
 
     @media (max-width: 1024px) {
       .card-status, .card-health, .card-console, .card-config,
-      .card-auth, .card-channels, .card-onboarding {
+      .card-auth, .card-channels, .card-onboarding, .card-chat {
         grid-column: span 12;
       }
     }
@@ -776,6 +834,118 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
       .card-auth { grid-column: span 4; }
       .card-channels { grid-column: span 4; }
       .card-onboarding { grid-column: span 4; }
+      .card-chat { grid-column: span 12; }
+    }
+
+    /* Direct Chat styles */
+    .chat-container {
+      display: flex;
+      flex-direction: column;
+      height: 400px;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      background: var(--bg-secondary);
+      overflow: hidden;
+    }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .chat-message {
+      max-width: 80%;
+      padding: 0.75rem 1rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.9rem;
+      line-height: 1.5;
+      word-wrap: break-word;
+    }
+
+    .chat-message.user {
+      align-self: flex-end;
+      background: var(--accent-blue);
+      color: white;
+    }
+
+    .chat-message.assistant {
+      align-self: flex-start;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+    }
+
+    .chat-message.system {
+      align-self: center;
+      background: var(--bg-card);
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      padding: 0.5rem 1rem;
+    }
+
+    .chat-message.error {
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid var(--accent-red);
+      color: var(--accent-red);
+    }
+
+    .chat-message pre {
+      background: var(--bg-primary);
+      padding: 0.5rem;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin: 0.5rem 0 0 0;
+      font-size: 0.8rem;
+    }
+
+    .chat-input-row {
+      display: flex;
+      gap: 0.5rem;
+      padding: 0.75rem;
+      border-top: 1px solid var(--border-color);
+      background: var(--bg-card);
+    }
+
+    .chat-input-row input {
+      flex: 1;
+      margin: 0;
+    }
+
+    .chat-input-row button {
+      flex-shrink: 0;
+    }
+
+    .chat-typing {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+    }
+
+    .chat-typing-dots {
+      display: flex;
+      gap: 3px;
+    }
+
+    .chat-typing-dots span {
+      width: 6px;
+      height: 6px;
+      background: var(--text-muted);
+      border-radius: 50%;
+      animation: typing 1.4s infinite;
+    }
+
+    .chat-typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .chat-typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes typing {
+      0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+      30% { opacity: 1; transform: translateY(-3px); }
     }
 
     /* Form elements */
@@ -1152,6 +1322,27 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
         </div>
 
         <pre id="log"></pre>
+      </div>
+
+      <!-- Direct Chat Card -->
+      <div class="card card-chat">
+        <h2><span class="icon">💬</span> Direct Chat</h2>
+        <p class="desc">Chat directly with OpenClaw. Messages are sent via the agent command.</p>
+        <div class="chat-container">
+          <div class="chat-messages" id="chatMessages">
+            <div class="chat-message system">Type a message below to start chatting with OpenClaw.</div>
+          </div>
+          <div id="chatTyping" class="chat-typing" style="display: none;">
+            <div class="chat-typing-dots">
+              <span></span><span></span><span></span>
+            </div>
+            <span>OpenClaw is thinking...</span>
+          </div>
+          <div class="chat-input-row">
+            <input type="text" id="chatInput" placeholder="Type your message..." />
+            <button id="chatSend" class="btn-primary">Send</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -1689,6 +1880,79 @@ app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
   }
 });
 
+// Direct Chat endpoint - wraps openclaw agent command
+app.post("/setup/api/chat", requireSetupAuth, async (req, res) => {
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
+  const { message } = req.body;
+
+  if (!message || typeof message !== "string" || message.trim().length === 0) {
+    return res.status(400).json({ ok: false, error: "Message is required" });
+  }
+
+  // Sanitize message - remove control characters but allow unicode
+  const sanitizedMessage = message.trim().replace(/[\x00-\x1F\x7F]/g, "");
+
+  if (sanitizedMessage.length > 10000) {
+    return res.status(400).json({ ok: false, error: "Message too long (max 10000 characters)" });
+  }
+
+  auditLog("CHAT_MESSAGE", { ip, messageLength: sanitizedMessage.length });
+
+  try {
+    // Check if configured
+    if (!isConfigured()) {
+      return res.status(400).json({
+        ok: false,
+        error: "OpenClaw is not configured. Please complete the setup first.",
+      });
+    }
+
+    // Run the agent command with the message
+    const result = await runCmd(
+      OPENCLAW_NODE,
+      clawArgs(["agent", "--message", sanitizedMessage, "--no-stream"]),
+      { timeoutMs: 120000 } // 2 minute timeout for AI responses
+    );
+
+    if (result.code !== 0) {
+      logger.error("Chat command failed", {
+        code: result.code,
+        output: result.output?.slice(0, 500),
+      });
+      return res.status(500).json({
+        ok: false,
+        error: "Failed to get response from OpenClaw",
+        details: result.output?.slice(0, 200),
+      });
+    }
+
+    // Parse the response - agent output may have metadata, try to extract just the response
+    let response = result.output.trim();
+
+    // If output contains markdown or structured format, keep it
+    // Otherwise just return as-is
+
+    logger.info("Chat response generated", {
+      ip,
+      inputLength: sanitizedMessage.length,
+      outputLength: response.length,
+    });
+
+    return res.json({
+      ok: true,
+      response,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    logger.error("Chat error", { error: err.message, ip });
+    return res.status(500).json({
+      ok: false,
+      error: "An error occurred while processing your message",
+      details: err.message,
+    });
+  }
+});
+
 // Health check endpoint - runs doctor and returns structured results
 app.get("/setup/api/health", requireSetupAuth, async (_req, res) => {
   try {
@@ -2182,8 +2446,15 @@ const proxy = httpProxy.createProxyServer({
   xfwd: true,
 });
 
-proxy.on("error", (err, _req, _res) => {
-  console.error("[proxy]", err);
+proxy.on("error", (err, req, _res) => {
+  logger.error("Proxy error", {
+    error: err.message,
+    code: err.code,
+    path: req?.url,
+    method: req?.method,
+    traceId: req?.trace?.traceId,
+  });
+  trackError(err, { context: "proxy", path: req?.url });
 });
 
 app.use(async (req, res) => {
@@ -2204,14 +2475,37 @@ app.use(async (req, res) => {
 });
 
 const server = app.listen(PORT, "0.0.0.0", () => {
-  console.log(`[wrapper] listening on :${PORT}`);
-  console.log(`[wrapper] state dir: ${STATE_DIR}`);
-  console.log(`[wrapper] workspace dir: ${WORKSPACE_DIR}`);
-  console.log(`[wrapper] gateway token: ${OPENCLAW_GATEWAY_TOKEN ? "(set)" : "(missing)"}`);
-  console.log(`[wrapper] gateway target: ${GATEWAY_TARGET}`);
+  // Use structured logging for startup
+  logStartupBanner({
+    port: PORT,
+    stateDir: STATE_DIR,
+    workspaceDir: WORKSPACE_DIR,
+  });
+
+  logger.info("Server configuration", {
+    port: PORT,
+    stateDir: STATE_DIR,
+    workspaceDir: WORKSPACE_DIR,
+    gatewayToken: OPENCLAW_GATEWAY_TOKEN ? "(set)" : "(missing)",
+    gatewayTarget: GATEWAY_TARGET,
+    configured: isConfigured(),
+    setupPasswordSet: Boolean(SETUP_PASSWORD),
+  });
+
   if (!SETUP_PASSWORD) {
-    console.warn("[wrapper] WARNING: SETUP_PASSWORD is not set; /setup will error.");
+    logger.warn("SETUP_PASSWORD is not set; /setup will error");
   }
+
+  // Log observability endpoints
+  logger.info("Observability endpoints available", {
+    endpoints: [
+      "/health",
+      "/health/detailed",
+      "/metrics",
+      "/metrics/prometheus",
+      "/diagnostics",
+    ],
+  });
   // Don't start gateway unless configured; proxy will ensure it starts.
 });
 
@@ -2230,11 +2524,13 @@ server.on("upgrade", async (req, socket, head) => {
 });
 
 process.on("SIGTERM", () => {
+  logger.info("Received SIGTERM, shutting down gracefully");
   // Best-effort shutdown
   try {
     if (gatewayProc) gatewayProc.kill("SIGTERM");
   } catch {
     // ignore
   }
+  logger.info("Shutdown complete");
   process.exit(0);
 });
