@@ -194,7 +194,7 @@ function findWritableStateDir() {
   }
 }
 
-const STATE_DIR = findWritableStateDir();
+let STATE_DIR = findWritableStateDir();
 
 function findWritableWorkspaceDir() {
   // If explicitly set via env, expand and validate
@@ -225,7 +225,75 @@ function findWritableWorkspaceDir() {
   }
 }
 
-const WORKSPACE_DIR = findWritableWorkspaceDir();
+let WORKSPACE_DIR = findWritableWorkspaceDir();
+
+// Ensure directories are available with fallback logic
+// Called at runtime to handle permission changes that may occur after initial setup
+function ensureDirectoriesWithFallback() {
+  // Try to create the configured directories
+  try {
+    fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+  } catch (err) {
+    if (err.code === "EACCES" || err.code === "EPERM") {
+      console.warn(`[wrapper] Permission denied for STATE_DIR: ${STATE_DIR}, finding fallback...`);
+      STATE_DIR = findWritableStateDir();
+      WORKSPACE_DIR = path.join(STATE_DIR, "workspace");
+    } else {
+      throw err;
+    }
+  }
+
+  try {
+    fs.mkdirSync(WORKSPACE_DIR, { recursive: true, mode: 0o700 });
+  } catch (err) {
+    if (err.code === "EACCES" || err.code === "EPERM") {
+      console.warn(`[wrapper] Permission denied for WORKSPACE_DIR: ${WORKSPACE_DIR}, finding fallback...`);
+      // Try alternative workspace locations
+      const alternatives = [
+        path.join(STATE_DIR, "workspace"),
+        path.join(os.homedir(), ".openclaw", "workspace"),
+        path.join(os.tmpdir(), `openclaw-workspace-${process.pid}`),
+      ];
+
+      let found = false;
+      for (const alt of alternatives) {
+        try {
+          fs.mkdirSync(alt, { recursive: true, mode: 0o700 });
+          WORKSPACE_DIR = alt;
+          console.log(`[wrapper] Using fallback workspace: ${WORKSPACE_DIR}`);
+          found = true;
+          break;
+        } catch {
+          continue;
+        }
+      }
+
+      if (!found) {
+        throw new Error(`Cannot create workspace directory. Tried: ${WORKSPACE_DIR}, ${alternatives.join(", ")}`);
+      }
+    } else {
+      throw err;
+    }
+  }
+
+  // Verify both directories are truly usable
+  const stateTest = testDirUsable(STATE_DIR, true);
+  if (!stateTest.ok) {
+    console.warn(`[wrapper] STATE_DIR ${STATE_DIR} failed usability test: ${stateTest.error}`);
+    STATE_DIR = findWritableStateDir();
+    WORKSPACE_DIR = path.join(STATE_DIR, "workspace");
+    fs.mkdirSync(WORKSPACE_DIR, { recursive: true, mode: 0o700 });
+  }
+
+  const workspaceTest = testDirUsable(WORKSPACE_DIR, true);
+  if (!workspaceTest.ok) {
+    console.warn(`[wrapper] WORKSPACE_DIR ${WORKSPACE_DIR} failed usability test: ${workspaceTest.error}`);
+    WORKSPACE_DIR = path.join(STATE_DIR, "workspace");
+    fs.mkdirSync(WORKSPACE_DIR, { recursive: true, mode: 0o700 });
+  }
+
+  return { stateDir: STATE_DIR, workspaceDir: WORKSPACE_DIR };
+}
 
 // Check if data is truly persistent (using /data Railway volume)
 // This helps users understand if their data will survive container restarts
@@ -463,8 +531,15 @@ async function startGateway() {
   if (gatewayProc) return;
   if (!isConfigured()) throw new Error("Gateway cannot start: not configured");
 
-  fs.mkdirSync(STATE_DIR, { recursive: true });
-  fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
+  // Ensure directories exist with fallback logic for permission errors
+  try {
+    ensureDirectoriesWithFallback();
+    console.log(`[wrapper] Using STATE_DIR: ${STATE_DIR}`);
+    console.log(`[wrapper] Using WORKSPACE_DIR: ${WORKSPACE_DIR}`);
+  } catch (err) {
+    console.error(`[wrapper] Failed to create directories: ${err.message}`);
+    throw new Error(`Cannot create required directories: ${err.message}`);
+  }
 
   const args = [
     "gateway",
