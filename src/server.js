@@ -817,10 +817,11 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
     .card-auth { grid-column: span 4; }
     .card-channels { grid-column: span 4; }
     .card-onboarding { grid-column: span 4; }
+    .card-chat { grid-column: span 12; }
 
     @media (max-width: 1024px) {
       .card-status, .card-health, .card-console, .card-config,
-      .card-auth, .card-channels, .card-onboarding {
+      .card-auth, .card-channels, .card-onboarding, .card-chat {
         grid-column: span 12;
       }
     }
@@ -833,6 +834,118 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
       .card-auth { grid-column: span 4; }
       .card-channels { grid-column: span 4; }
       .card-onboarding { grid-column: span 4; }
+      .card-chat { grid-column: span 12; }
+    }
+
+    /* Direct Chat styles */
+    .chat-container {
+      display: flex;
+      flex-direction: column;
+      height: 400px;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      background: var(--bg-secondary);
+      overflow: hidden;
+    }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .chat-message {
+      max-width: 80%;
+      padding: 0.75rem 1rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.9rem;
+      line-height: 1.5;
+      word-wrap: break-word;
+    }
+
+    .chat-message.user {
+      align-self: flex-end;
+      background: var(--accent-blue);
+      color: white;
+    }
+
+    .chat-message.assistant {
+      align-self: flex-start;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+    }
+
+    .chat-message.system {
+      align-self: center;
+      background: var(--bg-card);
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      padding: 0.5rem 1rem;
+    }
+
+    .chat-message.error {
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid var(--accent-red);
+      color: var(--accent-red);
+    }
+
+    .chat-message pre {
+      background: var(--bg-primary);
+      padding: 0.5rem;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin: 0.5rem 0 0 0;
+      font-size: 0.8rem;
+    }
+
+    .chat-input-row {
+      display: flex;
+      gap: 0.5rem;
+      padding: 0.75rem;
+      border-top: 1px solid var(--border-color);
+      background: var(--bg-card);
+    }
+
+    .chat-input-row input {
+      flex: 1;
+      margin: 0;
+    }
+
+    .chat-input-row button {
+      flex-shrink: 0;
+    }
+
+    .chat-typing {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+    }
+
+    .chat-typing-dots {
+      display: flex;
+      gap: 3px;
+    }
+
+    .chat-typing-dots span {
+      width: 6px;
+      height: 6px;
+      background: var(--text-muted);
+      border-radius: 50%;
+      animation: typing 1.4s infinite;
+    }
+
+    .chat-typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .chat-typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes typing {
+      0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+      30% { opacity: 1; transform: translateY(-3px); }
     }
 
     /* Form elements */
@@ -1209,6 +1322,27 @@ app.get("/setup", requireSetupAuth, (_req, res) => {
         </div>
 
         <pre id="log"></pre>
+      </div>
+
+      <!-- Direct Chat Card -->
+      <div class="card card-chat">
+        <h2><span class="icon">💬</span> Direct Chat</h2>
+        <p class="desc">Chat directly with OpenClaw. Messages are sent via the agent command.</p>
+        <div class="chat-container">
+          <div class="chat-messages" id="chatMessages">
+            <div class="chat-message system">Type a message below to start chatting with OpenClaw.</div>
+          </div>
+          <div id="chatTyping" class="chat-typing" style="display: none;">
+            <div class="chat-typing-dots">
+              <span></span><span></span><span></span>
+            </div>
+            <span>OpenClaw is thinking...</span>
+          </div>
+          <div class="chat-input-row">
+            <input type="text" id="chatInput" placeholder="Type your message..." />
+            <button id="chatSend" class="btn-primary">Send</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -1743,6 +1877,79 @@ app.post("/setup/api/console/run", requireSetupAuth, async (req, res) => {
     return res.status(400).json({ ok: false, error: "Unhandled command" });
   } catch (err) {
     return res.status(500).json({ ok: false, error: String(err) });
+  }
+});
+
+// Direct Chat endpoint - wraps openclaw agent command
+app.post("/setup/api/chat", requireSetupAuth, async (req, res) => {
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
+  const { message } = req.body;
+
+  if (!message || typeof message !== "string" || message.trim().length === 0) {
+    return res.status(400).json({ ok: false, error: "Message is required" });
+  }
+
+  // Sanitize message - remove control characters but allow unicode
+  const sanitizedMessage = message.trim().replace(/[\x00-\x1F\x7F]/g, "");
+
+  if (sanitizedMessage.length > 10000) {
+    return res.status(400).json({ ok: false, error: "Message too long (max 10000 characters)" });
+  }
+
+  auditLog("CHAT_MESSAGE", { ip, messageLength: sanitizedMessage.length });
+
+  try {
+    // Check if configured
+    if (!isConfigured()) {
+      return res.status(400).json({
+        ok: false,
+        error: "OpenClaw is not configured. Please complete the setup first.",
+      });
+    }
+
+    // Run the agent command with the message
+    const result = await runCmd(
+      OPENCLAW_NODE,
+      clawArgs(["agent", "--message", sanitizedMessage, "--no-stream"]),
+      { timeoutMs: 120000 } // 2 minute timeout for AI responses
+    );
+
+    if (result.code !== 0) {
+      logger.error("Chat command failed", {
+        code: result.code,
+        output: result.output?.slice(0, 500),
+      });
+      return res.status(500).json({
+        ok: false,
+        error: "Failed to get response from OpenClaw",
+        details: result.output?.slice(0, 200),
+      });
+    }
+
+    // Parse the response - agent output may have metadata, try to extract just the response
+    let response = result.output.trim();
+
+    // If output contains markdown or structured format, keep it
+    // Otherwise just return as-is
+
+    logger.info("Chat response generated", {
+      ip,
+      inputLength: sanitizedMessage.length,
+      outputLength: response.length,
+    });
+
+    return res.json({
+      ok: true,
+      response,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    logger.error("Chat error", { error: err.message, ip });
+    return res.status(500).json({
+      ok: false,
+      error: "An error occurred while processing your message",
+      details: err.message,
+    });
   }
 });
 
