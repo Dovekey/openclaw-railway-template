@@ -57,6 +57,7 @@ COPY --from=builder --chown=openclaw:openclaw /openclaw /openclaw
 COPY --from=builder --chown=openclaw:openclaw /app/node_modules ./node_modules
 COPY --chown=openclaw:openclaw package.json ./
 COPY --chown=openclaw:openclaw src ./src
+COPY --chown=openclaw:openclaw scripts ./scripts
 
 # Create openclaw executable
 RUN printf '%s\n' '#!/bin/sh' 'exec node /openclaw/dist/entry.js "$@"' > /usr/local/bin/openclaw \
@@ -82,5 +83,6 @@ ENV LOG_FORMAT=json
 EXPOSE 8080
 
 # Use tini as init system for proper signal handling
-ENTRYPOINT ["/sbin/tini", "--"]
+# Entrypoint script handles data directory permissions for Railway volumes
+ENTRYPOINT ["/sbin/tini", "--", "/app/scripts/docker-entrypoint.sh"]
 CMD ["node", "src/server.js"]
