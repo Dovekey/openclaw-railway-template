@@ -1606,9 +1606,11 @@ function buildOnboardArgs(payload) {
 }
 
 function runCmd(cmd, args, opts = {}) {
+  const { timeoutMs, ...spawnOpts } = opts;
+
   return new Promise((resolve) => {
     const proc = childProcess.spawn(cmd, args, {
-      ...opts,
+      ...spawnOpts,
       env: {
         ...process.env,
         OPENCLAW_STATE_DIR: STATE_DIR,
@@ -1620,15 +1622,41 @@ function runCmd(cmd, args, opts = {}) {
     });
 
     let out = "";
+    let timedOut = false;
+    let timeoutId = null;
+
+    // Set up timeout if specified
+    if (timeoutMs && timeoutMs > 0) {
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        proc.kill("SIGTERM");
+        // Force kill after 5 seconds if SIGTERM doesn't work
+        setTimeout(() => {
+          if (!proc.killed) {
+            proc.kill("SIGKILL");
+          }
+        }, 5000);
+      }, timeoutMs);
+    }
+
     proc.stdout?.on("data", (d) => (out += d.toString("utf8")));
     proc.stderr?.on("data", (d) => (out += d.toString("utf8")));
 
     proc.on("error", (err) => {
+      if (timeoutId) clearTimeout(timeoutId);
       out += `\n[spawn error] ${String(err)}\n`;
       resolve({ code: 127, output: out });
     });
 
-    proc.on("close", (code) => resolve({ code: code ?? 0, output: out }));
+    proc.on("close", (code) => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (timedOut) {
+        out += `\n[timeout] Command timed out after ${timeoutMs}ms\n`;
+        resolve({ code: 124, output: out }); // 124 is standard timeout exit code
+      } else {
+        resolve({ code: code ?? 0, output: out });
+      }
+    });
   });
 }
 
@@ -2081,21 +2109,30 @@ app.post("/setup/api/chat", requireSetupAuth, async (req, res) => {
     }
 
     // Run the agent command with the message
+    // Note: openclaw agent doesn't support --no-stream, so we just capture the output
     const result = await runCmd(
       OPENCLAW_NODE,
-      clawArgs(["agent", "--message", sanitizedMessage, "--no-stream"]),
+      clawArgs(["agent", "--message", sanitizedMessage]),
       { timeoutMs: 120000 } // 2 minute timeout for AI responses
     );
 
     if (result.code !== 0) {
+      // Check for specific errors
+      const output = result.output || "";
+
+      // Handle unknown option errors gracefully
+      if (output.includes("unknown option")) {
+        logger.warn("CLI compatibility issue", { output: output.slice(0, 200) });
+      }
+
       logger.error("Chat command failed", {
         code: result.code,
-        output: result.output?.slice(0, 500),
+        output: output.slice(0, 500),
       });
       return res.status(500).json({
         ok: false,
         error: "Failed to get response from OpenClaw",
-        details: result.output?.slice(0, 200),
+        details: output.slice(0, 200),
       });
     }
 
